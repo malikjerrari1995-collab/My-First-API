@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
-from sqlalchemy import create_engine, Column, Integer, String, Float, func
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ class Expense(Base):
     category    = Column(String, nullable=False)
     description = Column(String, nullable=True)
     date        = Column(String, nullable=False)
+    recurring   = Column(Boolean, default=False)
 
 class Income(Base):
     __tablename__ = "income"
@@ -41,6 +42,7 @@ class ExpenseInput(BaseModel):
     category:    str
     description: Optional[str] = None
     date:        Optional[str] = None
+    recurring:   Optional[bool] = False
 
 class IncomeInput(BaseModel):
     amount:      float
@@ -74,7 +76,13 @@ def add_expense(expense: ExpenseInput):
     db = SessionLocal()
     date = expense.date or datetime.today().strftime("%Y-%m-%d")
     month = date[:7]
-    new_expense = Expense(amount=expense.amount, category=expense.category.lower(), description=expense.description, date=date)
+    new_expense = Expense(
+        amount=expense.amount,
+        category=expense.category.lower(),
+        description=expense.description,
+        date=date,
+        recurring=expense.recurring
+    )
     db.add(new_expense)
     db.commit()
     db.refresh(new_expense)
@@ -84,7 +92,7 @@ def add_expense(expense: ExpenseInput):
         spent = db.query(func.sum(Expense.amount)).filter(Expense.category == expense.category.lower(), Expense.date.startswith(month)).scalar() or 0
         alert = get_alert(expense.category, spent, budget.limit_amount)
     db.close()
-    response = {"message": "Expense added!", "expense": {"id": new_expense.id, "amount": new_expense.amount, "category": new_expense.category, "description": new_expense.description, "date": new_expense.date}}
+    response = {"message": "Expense added!", "expense": {"id": new_expense.id, "amount": new_expense.amount, "category": new_expense.category, "description": new_expense.description, "date": new_expense.date, "recurring": new_expense.recurring}}
     if alert:
         response["alert"] = alert
     return response
@@ -100,7 +108,20 @@ def get_expenses(category: Optional[str] = Query(None), month: Optional[str] = Q
     expenses = query.order_by(Expense.date.desc()).all()
     total = sum(e.amount for e in expenses)
     db.close()
-    return {"total": round(total, 2), "count": len(expenses), "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description, "date": e.date} for e in expenses]}
+    return {"total": round(total, 2), "count": len(expenses), "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description, "date": e.date, "recurring": e.recurring} for e in expenses]}
+
+@app.get("/expenses/recurring")
+def get_recurring_expenses():
+    db = SessionLocal()
+    expenses = db.query(Expense).filter(Expense.recurring == True).all()
+    total = sum(e.amount for e in expenses)
+    db.close()
+    return {
+        "message": "Your recurring monthly expenses",
+        "monthly_total": round(total, 2),
+        "count": len(expenses),
+        "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description} for e in expenses]
+    }
 
 @app.put("/expenses/{expense_id}")
 def update_expense(
@@ -108,7 +129,8 @@ def update_expense(
     amount: Optional[float] = Query(None),
     category: Optional[str] = Query(None),
     description: Optional[str] = Query(None),
-    date: Optional[str] = Query(None)
+    date: Optional[str] = Query(None),
+    recurring: Optional[bool] = Query(None)
 ):
     db = SessionLocal()
     expense = db.query(Expense).filter(Expense.id == expense_id).first()
@@ -123,10 +145,12 @@ def update_expense(
         expense.description = description
     if date is not None:
         expense.date = date
+    if recurring is not None:
+        expense.recurring = recurring
     db.commit()
     db.refresh(expense)
     db.close()
-    return {"message": f"Expense {expense_id} updated!", "expense": {"id": expense.id, "amount": expense.amount, "category": expense.category, "description": expense.description, "date": expense.date}}
+    return {"message": f"Expense {expense_id} updated!", "expense": {"id": expense.id, "amount": expense.amount, "category": expense.category, "description": expense.description, "date": expense.date, "recurring": expense.recurring}}
 
 @app.delete("/expenses/{expense_id}")
 def delete_expense(expense_id: int):
@@ -202,6 +226,7 @@ def get_summary(month: str):
     total_income = db.query(func.sum(Income.amount)).filter(Income.date.startswith(month)).scalar() or 0
     total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.date.startswith(month)).scalar() or 0
     category_totals = db.query(Expense.category, func.sum(Expense.amount).label("total")).filter(Expense.date.startswith(month)).group_by(Expense.category).all()
+    recurring_total = db.query(func.sum(Expense.amount)).filter(Expense.recurring == True, Expense.date.startswith(month)).scalar() or 0
     budgets = db.query(Budget).filter(Budget.month == month).all()
     alerts = []
     for b in budgets:
@@ -211,4 +236,13 @@ def get_summary(month: str):
             alerts.append(alert)
     db.close()
     balance = round(total_income - total_expenses, 2)
-    return {"month": month, "total_income": round(total_income, 2), "total_expenses": round(total_expenses, 2), "balance": balance, "balance_status": "surplus" if balance >= 0 else "deficit", "spending_by_category": [{"category": c, "total": round(t, 2)} for c, t in sorted(category_totals, key=lambda x: x[1], reverse=True)], "alerts": alerts}
+    return {
+        "month": month,
+        "total_income": round(total_income, 2),
+        "total_expenses": round(total_expenses, 2),
+        "recurring_expenses": round(recurring_total, 2),
+        "balance": balance,
+        "balance_status": "surplus" if balance >= 0 else "deficit",
+        "spending_by_category": [{"category": c, "total": round(t, 2)} for c, t in sorted(category_totals, key=lambda x: x[1], reverse=True)],
+        "alerts": alerts
+    }
