@@ -102,6 +102,32 @@ def get_expenses(category: Optional[str] = Query(None), month: Optional[str] = Q
     db.close()
     return {"total": round(total, 2), "count": len(expenses), "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description, "date": e.date} for e in expenses]}
 
+@app.put("/expenses/{expense_id}")
+def update_expense(
+    expense_id: int,
+    amount: Optional[float] = Query(None),
+    category: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+    date: Optional[str] = Query(None)
+):
+    db = SessionLocal()
+    expense = db.query(Expense).filter(Expense.id == expense_id).first()
+    if not expense:
+        db.close()
+        raise HTTPException(status_code=404, detail="Expense not found")
+    if amount is not None:
+        expense.amount = amount
+    if category is not None:
+        expense.category = category.lower()
+    if description is not None:
+        expense.description = description
+    if date is not None:
+        expense.date = date
+    db.commit()
+    db.refresh(expense)
+    db.close()
+    return {"message": f"Expense {expense_id} updated!", "expense": {"id": expense.id, "amount": expense.amount, "category": expense.category, "description": expense.description, "date": expense.date}}
+
 @app.delete("/expenses/{expense_id}")
 def delete_expense(expense_id: int):
     db = SessionLocal()
