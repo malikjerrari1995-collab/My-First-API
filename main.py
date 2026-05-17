@@ -35,6 +35,13 @@ class Budget(Base):
     limit_amount = Column(Float, nullable=False)
     month        = Column(String, nullable=False)
 
+class SavingsGoal(Base):
+    __tablename__ = "savings_goals"
+    id           = Column(Integer, primary_key=True, index=True)
+    name         = Column(String, nullable=False)
+    target       = Column(Float, nullable=False)
+    month        = Column(String, nullable=False)
+
 Base.metadata.create_all(bind=engine)
 
 class ExpenseInput(BaseModel):
@@ -54,6 +61,11 @@ class BudgetInput(BaseModel):
     category:     str
     limit_amount: float
     month:        Optional[str] = None
+
+class SavingsGoalInput(BaseModel):
+    name:   str
+    target: float
+    month:  Optional[str] = None
 
 def get_alert(category, spent, limit):
     if limit <= 0:
@@ -76,13 +88,7 @@ def add_expense(expense: ExpenseInput):
     db = SessionLocal()
     date = expense.date or datetime.today().strftime("%Y-%m-%d")
     month = date[:7]
-    new_expense = Expense(
-        amount=expense.amount,
-        category=expense.category.lower(),
-        description=expense.description,
-        date=date,
-        recurring=expense.recurring
-    )
+    new_expense = Expense(amount=expense.amount, category=expense.category.lower(), description=expense.description, date=date, recurring=expense.recurring)
     db.add(new_expense)
     db.commit()
     db.refresh(new_expense)
@@ -116,22 +122,10 @@ def get_recurring_expenses():
     expenses = db.query(Expense).filter(Expense.recurring == True).all()
     total = sum(e.amount for e in expenses)
     db.close()
-    return {
-        "message": "Your recurring monthly expenses",
-        "monthly_total": round(total, 2),
-        "count": len(expenses),
-        "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description} for e in expenses]
-    }
+    return {"message": "Your recurring monthly expenses", "monthly_total": round(total, 2), "count": len(expenses), "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description} for e in expenses]}
 
 @app.put("/expenses/{expense_id}")
-def update_expense(
-    expense_id: int,
-    amount: Optional[float] = Query(None),
-    category: Optional[str] = Query(None),
-    description: Optional[str] = Query(None),
-    date: Optional[str] = Query(None),
-    recurring: Optional[bool] = Query(None)
-):
+def update_expense(expense_id: int, amount: Optional[float] = Query(None), category: Optional[str] = Query(None), description: Optional[str] = Query(None), date: Optional[str] = Query(None), recurring: Optional[bool] = Query(None)):
     db = SessionLocal()
     expense = db.query(Expense).filter(Expense.id == expense_id).first()
     if not expense:
@@ -220,6 +214,54 @@ def get_budgets(month: Optional[str] = Query(None)):
     db.close()
     return {"month": month, "budgets": result}
 
+@app.post("/savings")
+def set_savings_goal(goal: SavingsGoalInput):
+    db = SessionLocal()
+    month = goal.month or datetime.today().strftime("%Y-%m")
+    existing = db.query(SavingsGoal).filter(SavingsGoal.name == goal.name, SavingsGoal.month == month).first()
+    if existing:
+        existing.target = goal.target
+        db.commit()
+        db.refresh(existing)
+        db.close()
+        return {"message": f"Savings goal updated!", "goal": {"name": existing.name, "target": existing.target, "month": existing.month}}
+    new_goal = SavingsGoal(name=goal.name, target=goal.target, month=month)
+    db.add(new_goal)
+    db.commit()
+    db.refresh(new_goal)
+    db.close()
+    return {"message": "Savings goal created!", "goal": {"name": new_goal.name, "target": new_goal.target, "month": new_goal.month}}
+
+@app.get("/savings/{month}")
+def get_savings_progress(month: str):
+    db = SessionLocal()
+    goals = db.query(SavingsGoal).filter(SavingsGoal.month == month).all()
+    total_income = db.query(func.sum(Income.amount)).filter(Income.date.startswith(month)).scalar() or 0
+    total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.date.startswith(month)).scalar() or 0
+    actual_saved = round(total_income - total_expenses, 2)
+    result = []
+    for g in goals:
+        percentage = round((actual_saved / g.target) * 100, 1) if g.target > 0 else 0
+        remaining = round(g.target - actual_saved, 2)
+        if actual_saved >= g.target:
+            status = "GOAL REACHED!"
+        elif percentage >= 75:
+            status = "Almost there!"
+        elif percentage >= 50:
+            status = "Halfway there!"
+        else:
+            status = "Keep going!"
+        result.append({
+            "name": g.name,
+            "target": g.target,
+            "saved_so_far": actual_saved,
+            "remaining": remaining if remaining > 0 else 0,
+            "percentage": percentage,
+            "status": status
+        })
+    db.close()
+    return {"month": month, "actual_saved": actual_saved, "goals": result}
+
 @app.get("/summary/{month}")
 def get_summary(month: str):
     db = SessionLocal()
@@ -236,13 +278,4 @@ def get_summary(month: str):
             alerts.append(alert)
     db.close()
     balance = round(total_income - total_expenses, 2)
-    return {
-        "month": month,
-        "total_income": round(total_income, 2),
-        "total_expenses": round(total_expenses, 2),
-        "recurring_expenses": round(recurring_total, 2),
-        "balance": balance,
-        "balance_status": "surplus" if balance >= 0 else "deficit",
-        "spending_by_category": [{"category": c, "total": round(t, 2)} for c, t in sorted(category_totals, key=lambda x: x[1], reverse=True)],
-        "alerts": alerts
-    }
+    return {"month": month, "total_income": round(total_income, 2), "total_expenses": round(total_expenses, 2), "recurring_expenses": round(recurring_total, 2), "balance": balance, "balance_status": "surplus" if balance >= 0 else "deficit", "spending_by_category": [{"category": c, "total": round(t, 2)} for c, t in sorted(category_totals, key=lambda x: x[1], reverse=True)], "alerts": alerts}
