@@ -1,3 +1,4 @@
+import resend
 from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
@@ -5,6 +6,21 @@ from sqlalchemy.orm import sessionmaker
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+
+RESEND_API_KEY = "re_C7p7odaG_PaFJUT87ntWC9DHSKa7QJV1F"
+NOTIFICATION_EMAIL = "malikjerrari1995@gmail.com"
+resend.api_key = RESEND_API_KEY
+
+def send_alert_email(subject: str, message: str):
+    try:
+        resend.Emails.send({
+            "from": "onboarding@resend.dev",
+            "to": NOTIFICATION_EMAIL,
+            "subject": subject,
+            "html": f"<h2>Expense Tracker Alert</h2><p>{message}</p>"
+        })
+    except Exception as e:
+        print(f"Email failed: {e}")
 
 DATABASE_URL = "sqlite:///./finance.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -97,10 +113,13 @@ def add_expense(expense: ExpenseInput):
     if budget:
         spent = db.query(func.sum(Expense.amount)).filter(Expense.category == expense.category.lower(), Expense.date.startswith(month)).scalar() or 0
         alert = get_alert(expense.category, spent, budget.limit_amount)
+        if alert:
+            send_alert_email(f"Budget Alert - {expense.category.title()}", alert)
     db.close()
     response = {"message": "Expense added!", "expense": {"id": new_expense.id, "amount": new_expense.amount, "category": new_expense.category, "description": new_expense.description, "date": new_expense.date, "recurring": new_expense.recurring}}
     if alert:
         response["alert"] = alert
+        response["email_sent"] = True
     return response
 
 @app.get("/expenses")
@@ -224,7 +243,7 @@ def set_savings_goal(goal: SavingsGoalInput):
         db.commit()
         db.refresh(existing)
         db.close()
-        return {"message": f"Savings goal updated!", "goal": {"name": existing.name, "target": existing.target, "month": existing.month}}
+        return {"message": "Savings goal updated!", "goal": {"name": existing.name, "target": existing.target, "month": existing.month}}
     new_goal = SavingsGoal(name=goal.name, target=goal.target, month=month)
     db.add(new_goal)
     db.commit()
@@ -251,14 +270,7 @@ def get_savings_progress(month: str):
             status = "Halfway there!"
         else:
             status = "Keep going!"
-        result.append({
-            "name": g.name,
-            "target": g.target,
-            "saved_so_far": actual_saved,
-            "remaining": remaining if remaining > 0 else 0,
-            "percentage": percentage,
-            "status": status
-        })
+        result.append({"name": g.name, "target": g.target, "saved_so_far": actual_saved, "remaining": remaining if remaining > 0 else 0, "percentage": percentage, "status": status})
     db.close()
     return {"month": month, "actual_saved": actual_saved, "goals": result}
 
