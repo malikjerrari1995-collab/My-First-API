@@ -2,3 +2,6 @@ fastapi
 uvicorn
 sqlalchemy
 resend
+passlib
+python-jose
+bcrypt

@@ -1,39 +1,48 @@
 import resend
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse
 import csv
 import io
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+from passlib.context import CryptContext
+from jose import JWTError, jwt
 
-RESEND_API_KEY = "re_C7p7odaG_PaFJUT87ntWC9DHSKa7QJV1F"
+# --- Config ---
+RESEND_API_KEY = "YOUR_API_KEY"
 NOTIFICATION_EMAIL = "malikjerrari1995@gmail.com"
+SECRET_KEY = "your-super-secret-key-change-this-in-production"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+
 resend.api_key = RESEND_API_KEY
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-def send_alert_email(subject: str, message: str):
-    try:
-        resend.Emails.send({
-            "from": "onboarding@resend.dev",
-            "to": NOTIFICATION_EMAIL,
-            "subject": subject,
-            "html": f"<h2>Expense Tracker Alert</h2><p>{message}</p>"
-        })
-    except Exception as e:
-        print(f"Email failed: {e}")
-
+# --- Database ---
 DATABASE_URL = "sqlite:///./finance.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
+# --- Models ---
+class User(Base):
+    __tablename__ = "users"
+    id       = Column(Integer, primary_key=True, index=True)
+    email    = Column(String, unique=True, nullable=False)
+    password = Column(String, nullable=False)
+    name     = Column(String, nullable=True)
+
 class Expense(Base):
     __tablename__ = "expenses"
     id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, nullable=False)
     amount      = Column(Float, nullable=False)
     category    = Column(String, nullable=False)
     description = Column(String, nullable=True)
@@ -43,6 +52,7 @@ class Expense(Base):
 class Income(Base):
     __tablename__ = "income"
     id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, nullable=False)
     amount      = Column(Float, nullable=False)
     source      = Column(String, nullable=False)
     description = Column(String, nullable=True)
@@ -51,18 +61,26 @@ class Income(Base):
 class Budget(Base):
     __tablename__ = "budgets"
     id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(Integer, nullable=False)
     category     = Column(String, nullable=False)
     limit_amount = Column(Float, nullable=False)
     month        = Column(String, nullable=False)
 
 class SavingsGoal(Base):
     __tablename__ = "savings_goals"
-    id           = Column(Integer, primary_key=True, index=True)
-    name         = Column(String, nullable=False)
-    target       = Column(Float, nullable=False)
-    month        = Column(String, nullable=False)
+    id      = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    name    = Column(String, nullable=False)
+    target  = Column(Float, nullable=False)
+    month   = Column(String, nullable=False)
 
 Base.metadata.create_all(bind=engine)
+
+# --- Input models ---
+class UserRegister(BaseModel):
+    email:    str
+    password: str
+    name:     Optional[str] = None
 
 class ExpenseInput(BaseModel):
     amount:      float
@@ -87,6 +105,29 @@ class SavingsGoalInput(BaseModel):
     target: float
     month:  Optional[str] = None
 
+# --- Auth helpers ---
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+def verify_password(plain: str, hashed: str):
+    return pwd_context.verify(plain, hashed)
+
+def create_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return user_id
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
 def get_alert(category, spent, limit):
     if limit <= 0:
         return None
@@ -97,7 +138,19 @@ def get_alert(category, spent, limit):
         return f"Warning — you've used {pct:.0f}% of your {category} budget (£{spent:.2f} of £{limit:.2f})"
     return None
 
-app = FastAPI(title="Expense Tracker API", version="1.0.0")
+def send_alert_email(subject: str, message: str):
+    try:
+        resend.Emails.send({
+            "from": "onboarding@resend.dev",
+            "to": NOTIFICATION_EMAIL,
+            "subject": subject,
+            "html": f"<h2>Expense Tracker Alert</h2><p>{message}</p>"
+        })
+    except Exception as e:
+        print(f"Email failed: {e}")
+
+# --- App ---
+app = FastAPI(title="Expense Tracker API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -106,23 +159,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Auth endpoints ---
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "Expense Tracker API is running!"}
+    return {"status": "ok", "message": "Expense Tracker API v2 is running!"}
 
+@app.post("/register")
+def register(user: UserRegister):
+    db = SessionLocal()
+    existing = db.query(User).filter(User.email == user.email).first()
+    if existing:
+        db.close()
+        raise HTTPException(status_code=400, detail="Email already registered")
+    new_user = User(email=user.email, password=hash_password(user.password), name=user.name)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    db.close()
+    token = create_token({"user_id": new_user.id})
+    return {"message": "Account created!", "token": token, "name": new_user.name, "email": new_user.email}
+
+@app.post("/login")
+def login(form: OAuth2PasswordRequestForm = Depends()):
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == form.username).first()
+    db.close()
+    if not user or not verify_password(form.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_token({"user_id": user.id})
+    return {"access_token": token, "token_type": "bearer", "name": user.name, "email": user.email}
+
+# --- Expenses ---
 @app.post("/expenses")
-def add_expense(expense: ExpenseInput):
+def add_expense(expense: ExpenseInput, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
     date = expense.date or datetime.today().strftime("%Y-%m-%d")
     month = date[:7]
-    new_expense = Expense(amount=expense.amount, category=expense.category.lower(), description=expense.description, date=date, recurring=expense.recurring)
+    new_expense = Expense(user_id=user_id, amount=expense.amount, category=expense.category.lower(), description=expense.description, date=date, recurring=expense.recurring)
     db.add(new_expense)
     db.commit()
     db.refresh(new_expense)
-    budget = db.query(Budget).filter(Budget.category == expense.category.lower(), Budget.month == month).first()
+    budget = db.query(Budget).filter(Budget.user_id == user_id, Budget.category == expense.category.lower(), Budget.month == month).first()
     alert = None
     if budget:
-        spent = db.query(func.sum(Expense.amount)).filter(Expense.category == expense.category.lower(), Expense.date.startswith(month)).scalar() or 0
+        spent = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.category == expense.category.lower(), Expense.date.startswith(month)).scalar() or 0
         alert = get_alert(expense.category, spent, budget.limit_amount)
         if alert:
             send_alert_email(f"Budget Alert - {expense.category.title()}", alert)
@@ -134,9 +214,9 @@ def add_expense(expense: ExpenseInput):
     return response
 
 @app.get("/expenses")
-def get_expenses(category: Optional[str] = Query(None), month: Optional[str] = Query(None)):
+def get_expenses(category: Optional[str] = Query(None), month: Optional[str] = Query(None), user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    query = db.query(Expense)
+    query = db.query(Expense).filter(Expense.user_id == user_id)
     if category:
         query = query.filter(Expense.category == category.lower())
     if month:
@@ -147,39 +227,34 @@ def get_expenses(category: Optional[str] = Query(None), month: Optional[str] = Q
     return {"total": round(total, 2), "count": len(expenses), "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description, "date": e.date, "recurring": e.recurring} for e in expenses]}
 
 @app.get("/expenses/recurring")
-def get_recurring_expenses():
+def get_recurring_expenses(user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    expenses = db.query(Expense).filter(Expense.recurring == True).all()
+    expenses = db.query(Expense).filter(Expense.user_id == user_id, Expense.recurring == True).all()
     total = sum(e.amount for e in expenses)
     db.close()
     return {"message": "Your recurring monthly expenses", "monthly_total": round(total, 2), "count": len(expenses), "expenses": [{"id": e.id, "amount": e.amount, "category": e.category, "description": e.description} for e in expenses]}
 
 @app.put("/expenses/{expense_id}")
-def update_expense(expense_id: int, amount: Optional[float] = Query(None), category: Optional[str] = Query(None), description: Optional[str] = Query(None), date: Optional[str] = Query(None), recurring: Optional[bool] = Query(None)):
+def update_expense(expense_id: int, amount: Optional[float] = Query(None), category: Optional[str] = Query(None), description: Optional[str] = Query(None), date: Optional[str] = Query(None), recurring: Optional[bool] = Query(None), user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    expense = db.query(Expense).filter(Expense.id == expense_id).first()
+    expense = db.query(Expense).filter(Expense.id == expense_id, Expense.user_id == user_id).first()
     if not expense:
         db.close()
         raise HTTPException(status_code=404, detail="Expense not found")
-    if amount is not None:
-        expense.amount = amount
-    if category is not None:
-        expense.category = category.lower()
-    if description is not None:
-        expense.description = description
-    if date is not None:
-        expense.date = date
-    if recurring is not None:
-        expense.recurring = recurring
+    if amount is not None: expense.amount = amount
+    if category is not None: expense.category = category.lower()
+    if description is not None: expense.description = description
+    if date is not None: expense.date = date
+    if recurring is not None: expense.recurring = recurring
     db.commit()
     db.refresh(expense)
     db.close()
     return {"message": f"Expense {expense_id} updated!", "expense": {"id": expense.id, "amount": expense.amount, "category": expense.category, "description": expense.description, "date": expense.date, "recurring": expense.recurring}}
 
 @app.delete("/expenses/{expense_id}")
-def delete_expense(expense_id: int):
+def delete_expense(expense_id: int, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    expense = db.query(Expense).filter(Expense.id == expense_id).first()
+    expense = db.query(Expense).filter(Expense.id == expense_id, Expense.user_id == user_id).first()
     if not expense:
         db.close()
         raise HTTPException(status_code=404, detail="Expense not found")
@@ -188,11 +263,12 @@ def delete_expense(expense_id: int):
     db.close()
     return {"message": f"Expense {expense_id} deleted!"}
 
+# --- Income ---
 @app.post("/income")
-def add_income(income: IncomeInput):
+def add_income(income: IncomeInput, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
     date = income.date or datetime.today().strftime("%Y-%m-%d")
-    new_income = Income(amount=income.amount, source=income.source, description=income.description, date=date)
+    new_income = Income(user_id=user_id, amount=income.amount, source=income.source, description=income.description, date=date)
     db.add(new_income)
     db.commit()
     db.refresh(new_income)
@@ -200,9 +276,9 @@ def add_income(income: IncomeInput):
     return {"message": "Income added!", "income": {"id": new_income.id, "amount": new_income.amount, "source": new_income.source, "description": new_income.description, "date": new_income.date}}
 
 @app.get("/income")
-def get_income(month: Optional[str] = Query(None)):
+def get_income(month: Optional[str] = Query(None), user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    query = db.query(Income)
+    query = db.query(Income).filter(Income.user_id == user_id)
     if month:
         query = query.filter(Income.date.startswith(month))
     incomes = query.order_by(Income.date.desc()).all()
@@ -210,18 +286,19 @@ def get_income(month: Optional[str] = Query(None)):
     db.close()
     return {"total": round(total, 2), "count": len(incomes), "income": [{"id": i.id, "amount": i.amount, "source": i.source, "description": i.description, "date": i.date} for i in incomes]}
 
+# --- Budgets ---
 @app.post("/budgets")
-def set_budget(budget: BudgetInput):
+def set_budget(budget: BudgetInput, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
     month = budget.month or datetime.today().strftime("%Y-%m")
-    existing = db.query(Budget).filter(Budget.category == budget.category.lower(), Budget.month == month).first()
+    existing = db.query(Budget).filter(Budget.user_id == user_id, Budget.category == budget.category.lower(), Budget.month == month).first()
     if existing:
         existing.limit_amount = budget.limit_amount
         db.commit()
         db.refresh(existing)
         db.close()
         return {"message": f"Budget updated for {budget.category} in {month}", "budget": {"category": existing.category, "limit": existing.limit_amount, "month": existing.month}}
-    new_budget = Budget(category=budget.category.lower(), limit_amount=budget.limit_amount, month=month)
+    new_budget = Budget(user_id=user_id, category=budget.category.lower(), limit_amount=budget.limit_amount, month=month)
     db.add(new_budget)
     db.commit()
     db.refresh(new_budget)
@@ -229,13 +306,13 @@ def set_budget(budget: BudgetInput):
     return {"message": f"Budget set for {budget.category} in {month}", "budget": {"category": new_budget.category, "limit": new_budget.limit_amount, "month": new_budget.month}}
 
 @app.get("/budgets")
-def get_budgets(month: Optional[str] = Query(None)):
+def get_budgets(month: Optional[str] = Query(None), user_id: int = Depends(get_current_user)):
     db = SessionLocal()
     month = month or datetime.today().strftime("%Y-%m")
-    budgets = db.query(Budget).filter(Budget.month == month).all()
+    budgets = db.query(Budget).filter(Budget.user_id == user_id, Budget.month == month).all()
     result = []
     for b in budgets:
-        spent = db.query(func.sum(Expense.amount)).filter(Expense.category == b.category, Expense.date.startswith(month)).scalar() or 0
+        spent = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.category == b.category, Expense.date.startswith(month)).scalar() or 0
         spent = round(spent, 2)
         percentage = round((spent / b.limit_amount) * 100, 1) if b.limit_amount > 0 else 0
         remaining = round(b.limit_amount - spent, 2)
@@ -244,18 +321,19 @@ def get_budgets(month: Optional[str] = Query(None)):
     db.close()
     return {"month": month, "budgets": result}
 
+# --- Savings ---
 @app.post("/savings")
-def set_savings_goal(goal: SavingsGoalInput):
+def set_savings_goal(goal: SavingsGoalInput, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
     month = goal.month or datetime.today().strftime("%Y-%m")
-    existing = db.query(SavingsGoal).filter(SavingsGoal.name == goal.name, SavingsGoal.month == month).first()
+    existing = db.query(SavingsGoal).filter(SavingsGoal.user_id == user_id, SavingsGoal.name == goal.name, SavingsGoal.month == month).first()
     if existing:
         existing.target = goal.target
         db.commit()
         db.refresh(existing)
         db.close()
         return {"message": "Savings goal updated!", "goal": {"name": existing.name, "target": existing.target, "month": existing.month}}
-    new_goal = SavingsGoal(name=goal.name, target=goal.target, month=month)
+    new_goal = SavingsGoal(user_id=user_id, name=goal.name, target=goal.target, month=month)
     db.add(new_goal)
     db.commit()
     db.refresh(new_goal)
@@ -263,70 +341,59 @@ def set_savings_goal(goal: SavingsGoalInput):
     return {"message": "Savings goal created!", "goal": {"name": new_goal.name, "target": new_goal.target, "month": new_goal.month}}
 
 @app.get("/savings/{month}")
-def get_savings_progress(month: str):
+def get_savings_progress(month: str, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    goals = db.query(SavingsGoal).filter(SavingsGoal.month == month).all()
-    total_income = db.query(func.sum(Income.amount)).filter(Income.date.startswith(month)).scalar() or 0
-    total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.date.startswith(month)).scalar() or 0
+    goals = db.query(SavingsGoal).filter(SavingsGoal.user_id == user_id, SavingsGoal.month == month).all()
+    total_income = db.query(func.sum(Income.amount)).filter(Income.user_id == user_id, Income.date.startswith(month)).scalar() or 0
+    total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.date.startswith(month)).scalar() or 0
     actual_saved = round(total_income - total_expenses, 2)
     result = []
     for g in goals:
         percentage = round((actual_saved / g.target) * 100, 1) if g.target > 0 else 0
         remaining = round(g.target - actual_saved, 2)
-        if actual_saved >= g.target:
-            status = "GOAL REACHED!"
-        elif percentage >= 75:
-            status = "Almost there!"
-        elif percentage >= 50:
-            status = "Halfway there!"
-        else:
-            status = "Keep going!"
+        if actual_saved >= g.target: status = "GOAL REACHED!"
+        elif percentage >= 75: status = "Almost there!"
+        elif percentage >= 50: status = "Halfway there!"
+        else: status = "Keep going!"
         result.append({"name": g.name, "target": g.target, "saved_so_far": actual_saved, "remaining": remaining if remaining > 0 else 0, "percentage": percentage, "status": status})
     db.close()
     return {"month": month, "actual_saved": actual_saved, "goals": result}
 
+# --- Summary ---
 @app.get("/summary/{month}")
-def get_summary(month: str):
+def get_summary(month: str, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    total_income = db.query(func.sum(Income.amount)).filter(Income.date.startswith(month)).scalar() or 0
-    total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.date.startswith(month)).scalar() or 0
-    category_totals = db.query(Expense.category, func.sum(Expense.amount).label("total")).filter(Expense.date.startswith(month)).group_by(Expense.category).all()
-    recurring_total = db.query(func.sum(Expense.amount)).filter(Expense.recurring == True, Expense.date.startswith(month)).scalar() or 0
-    budgets = db.query(Budget).filter(Budget.month == month).all()
+    total_income = db.query(func.sum(Income.amount)).filter(Income.user_id == user_id, Income.date.startswith(month)).scalar() or 0
+    total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.date.startswith(month)).scalar() or 0
+    category_totals = db.query(Expense.category, func.sum(Expense.amount).label("total")).filter(Expense.user_id == user_id, Expense.date.startswith(month)).group_by(Expense.category).all()
+    recurring_total = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.recurring == True, Expense.date.startswith(month)).scalar() or 0
+    budgets = db.query(Budget).filter(Budget.user_id == user_id, Budget.month == month).all()
     alerts = []
     for b in budgets:
-        spent = db.query(func.sum(Expense.amount)).filter(Expense.category == b.category, Expense.date.startswith(month)).scalar() or 0
+        spent = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.category == b.category, Expense.date.startswith(month)).scalar() or 0
         alert = get_alert(b.category, spent, b.limit_amount)
-        if alert:
-            alerts.append(alert)
+        if alert: alerts.append(alert)
     db.close()
     balance = round(total_income - total_expenses, 2)
     return {"month": month, "total_income": round(total_income, 2), "total_expenses": round(total_expenses, 2), "recurring_expenses": round(recurring_total, 2), "balance": balance, "balance_status": "surplus" if balance >= 0 else "deficit", "spending_by_category": [{"category": c, "total": round(t, 2)} for c, t in sorted(category_totals, key=lambda x: x[1], reverse=True)], "alerts": alerts}
 
+# --- Export ---
 @app.get("/export/{month}")
-def export_expenses(month: str):
+def export_expenses(month: str, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
-    expenses = db.query(Expense).filter(Expense.date.startswith(month)).order_by(Expense.date.desc()).all()
-    income = db.query(Income).filter(Income.date.startswith(month)).order_by(Income.date.desc()).all()
+    expenses = db.query(Expense).filter(Expense.user_id == user_id, Expense.date.startswith(month)).order_by(Expense.date.desc()).all()
+    income = db.query(Income).filter(Income.user_id == user_id, Income.date.startswith(month)).order_by(Income.date.desc()).all()
     db.close()
-
     output = io.StringIO()
     writer = csv.writer(output)
-
     writer.writerow(["EXPENSES"])
     writer.writerow(["ID", "Date", "Category", "Description", "Amount", "Recurring"])
     for e in expenses:
         writer.writerow([e.id, e.date, e.category, e.description or "", f"£{e.amount:.2f}", "Yes" if e.recurring else "No"])
-
     writer.writerow([])
     writer.writerow(["INCOME"])
     writer.writerow(["ID", "Date", "Source", "Description", "Amount"])
     for i in income:
         writer.writerow([i.id, i.date, i.source, i.description or "", f"£{i.amount:.2f}"])
-
     output.seek(0)
-    return StreamingResponse(
-        io.BytesIO(output.getvalue().encode()),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"}
-    )
+    return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"})
