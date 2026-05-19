@@ -518,6 +518,26 @@ def get_insights(month: str, user_id: int = Depends(get_current_user)):
     elif balance < 0:
         insights.append({"type": "danger", "icon": "🔴", "title": "Negative balance", "message": f"You've spent £{abs(balance):.2f} more than you earned this month. Review your expenses to get back on track."})
 
+# Savings opportunity insight
+    if total_income > 0 and total_expenses > 0:
+        food_total = sum(t[1] for t in category_totals if t[0] == "food")
+        if food_total > 0:
+            saving = round(food_total * 0.1, 2)
+            insights.append({"type": "info", "icon": "💡", "title": "Savings opportunity", "message": f"If you reduced your food spending by 10%, you could save an extra £{saving:.2f} this month."})
+
+    # Savings goal timeline
+    for g in goals:
+        actual_saved = total_income - total_expenses
+        if actual_saved > 0 and actual_saved < g.target:
+            months_needed = round(g.target / actual_saved, 1)
+            insights.append({"type": "info", "icon": "📅", "title": f"{g.name} timeline", "message": f"At your current savings rate of £{actual_saved:.2f}/month, you'll hit your {g.name} goal in {months_needed} months."})
+
+    # Income tip
+    if total_income > 0:
+        monthly_savings = total_income - total_expenses
+        annual_savings = round(monthly_savings * 12, 2)
+        if monthly_savings > 0:
+            insights.append({"type": "success", "icon": "📈", "title": "Annual savings projection", "message": f"If you keep this up, you'll save £{annual_savings:.2f} over the next 12 months!"})
     if not insights:
         insights.append({"type": "info", "icon": "💡", "title": "Add more data", "message": "Add your income, expenses and budgets to get personalised insights for this month."})
 
