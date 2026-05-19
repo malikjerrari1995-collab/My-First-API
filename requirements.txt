@@ -1,9 +1,8 @@
-fastapi 
+fastapi
 uvicorn
 sqlalchemy
 resend
 passlib
 python-jose
-bcrypt
-python-multipart
+bcrypt==4.0.1
 python-multipart
