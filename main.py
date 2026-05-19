@@ -1,4 +1,6 @@
 import resend
+import requests
+from urllib.parse import urlencode
 import csv
 import io
 from fastapi import FastAPI, HTTPException, Query, Depends
@@ -16,6 +18,9 @@ from jose import JWTError, jwt
 
 # --- Config ---
 RESEND_API_KEY = "YOUR_API_KEY"
+TRUELAYER_CLIENT_ID = "sandbox-financetracker-322ee6"
+TRUELAYER_CLIENT_SECRET = "64b4b0aa-5688-4220-bbe0-4e7841030aa8"
+TRUELAYER_REDIRECT_URI = "https://my-first-api-production-0383.up.railway.app/bank/callback"
 NOTIFICATION_EMAIL = "malikjerrari1995@gmail.com"
 SECRET_KEY = "your-super-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
@@ -397,3 +402,68 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
         writer.writerow([i.id, i.date, i.source, i.description or "", f"£{i.amount:.2f}"])
     output.seek(0)
     return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"})
+
+# =====================
+# BANK CONNECTION
+# =====================
+
+@app.get("/bank/connect")
+def bank_connect(user_id: int = Depends(get_current_user)):
+    params = {
+        "response_type": "code",
+        "client_id": TRUELAYER_CLIENT_ID,
+        "scope": "info accounts balance transactions",
+        "redirect_uri": TRUELAYER_REDIRECT_URI,
+        "providers": "uk-ob-all uk-oauth-all",
+    }
+    url = "https://auth.truelayer-sandbox.com/?" + urlencode(params)
+    return {"connect_url": url}
+
+@app.get("/bank/callback")
+def bank_callback(code: str, user_id: int = Depends(get_current_user)):
+    # Exchange code for access token
+    res = requests.post("https://auth.truelayer-sandbox.com/connect/token", data={
+        "grant_type": "authorization_code",
+        "client_id": TRUELAYER_CLIENT_ID,
+        "client_secret": TRUELAYER_CLIENT_SECRET,
+        "redirect_uri": TRUELAYER_REDIRECT_URI,
+        "code": code
+    })
+    tokens = res.json()
+    access_token = tokens.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Failed to get access token")
+    return {"message": "Bank connected!", "access_token": access_token}
+
+@app.get("/bank/transactions")
+def get_bank_transactions(access_token: str, user_id: int = Depends(get_current_user)):
+    # Get accounts
+    headers = {"Authorization": f"Bearer {access_token}"}
+    accounts_res = requests.get("https://api.truelayer-sandbox.com/data/v1/accounts", headers=headers)
+    accounts = accounts_res.json().get("results", [])
+    if not accounts:
+        raise HTTPException(status_code=400, detail="No accounts found")
+
+    # Get transactions from first account
+    account_id = accounts[0]["account_id"]
+    trans_res = requests.get(f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions", headers=headers)
+    transactions = trans_res.json().get("results", [])
+
+    # Import transactions as expenses
+    db = SessionLocal()
+    imported = 0
+    for t in transactions:
+        if t.get("amount", 0) < 0:  # Only expenses (negative amounts)
+            new_expense = Expense(
+                user_id=user_id,
+                amount=abs(t["amount"]),
+                category="bank import",
+                description=t.get("description", "Bank transaction"),
+                date=t.get("timestamp", "")[:10],
+                recurring=False
+            )
+            db.add(new_expense)
+            imported += 1
+    db.commit()
+    db.close()
+    return {"message": f"Imported {imported} transactions!", "total": imported}
