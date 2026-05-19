@@ -1,15 +1,15 @@
 import resend
-import requests
-from urllib.parse import urlencode
 import csv
 import io
+import requests
+from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
@@ -17,14 +17,14 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 
 # --- Config ---
-RESEND_API_KEY = "YOUR_API_KEY"
-TRUELAYER_CLIENT_ID = "sandbox-financetracker-322ee6"
-TRUELAYER_CLIENT_SECRET = "64b4b0aa-5688-4220-bbe0-4e7841030aa8"
-TRUELAYER_REDIRECT_URI = "https://my-first-api-production-0383.up.railway.app/bank/callback"
+RESEND_API_KEY = "re_C7p7odaG_PaFJUT87ntWC9DHSKa7QJV1F"
 NOTIFICATION_EMAIL = "malikjerrari1995@gmail.com"
 SECRET_KEY = "your-super-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+TRUELAYER_CLIENT_ID = "sandbox-financetracker-322ee6"
+TRUELAYER_CLIENT_SECRET = "64b4b0aa-5688-4220-bbe0-4e7841030aa8"
+TRUELAYER_REDIRECT_URI = "https://my-first-api-production-0383.up.railway.app/bank/callback"
 
 resend.api_key = RESEND_API_KEY
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -164,18 +164,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Auth endpoints ---
+# --- Health ---
 @app.get("/health")
 def health_check():
     return {"status": "ok", "message": "Expense Tracker API v2 is running!"}
 
+# --- Auth ---
 @app.post("/register")
 def register(user: UserRegister):
     db = SessionLocal()
     existing = db.query(User).filter(User.email == user.email).first()
-    if existing:
-        db.close()
-        raise HTTPException(status_code=400, detail="Email already registered")
     if existing:
         db.close()
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -415,10 +413,7 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
     output.seek(0)
     return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"})
 
-# =====================
-# BANK CONNECTION
-# =====================
-
+# --- Bank Connection ---
 @app.get("/bank/connect")
 def bank_connect(user_id: int = Depends(get_current_user)):
     params = {
@@ -433,7 +428,6 @@ def bank_connect(user_id: int = Depends(get_current_user)):
 
 @app.get("/bank/callback")
 def bank_callback(code: str, user_id: int = Depends(get_current_user)):
-    # Exchange code for access token
     res = requests.post("https://auth.truelayer-sandbox.com/connect/token", data={
         "grant_type": "authorization_code",
         "client_id": TRUELAYER_CLIENT_ID,
@@ -449,33 +443,82 @@ def bank_callback(code: str, user_id: int = Depends(get_current_user)):
 
 @app.get("/bank/transactions")
 def get_bank_transactions(access_token: str, user_id: int = Depends(get_current_user)):
-    # Get accounts
     headers = {"Authorization": f"Bearer {access_token}"}
     accounts_res = requests.get("https://api.truelayer-sandbox.com/data/v1/accounts", headers=headers)
     accounts = accounts_res.json().get("results", [])
     if not accounts:
         raise HTTPException(status_code=400, detail="No accounts found")
-
-    # Get transactions from first account
     account_id = accounts[0]["account_id"]
     trans_res = requests.get(f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions", headers=headers)
     transactions = trans_res.json().get("results", [])
-
-    # Import transactions as expenses
     db = SessionLocal()
     imported = 0
     for t in transactions:
-        if t.get("amount", 0) < 0:  # Only expenses (negative amounts)
-            new_expense = Expense(
-                user_id=user_id,
-                amount=abs(t["amount"]),
-                category="bank import",
-                description=t.get("description", "Bank transaction"),
-                date=t.get("timestamp", "")[:10],
-                recurring=False
-            )
+        if t.get("amount", 0) < 0:
+            new_expense = Expense(user_id=user_id, amount=abs(t["amount"]), category="bank import", description=t.get("description", "Bank transaction"), date=t.get("timestamp", "")[:10], recurring=False)
             db.add(new_expense)
             imported += 1
     db.commit()
     db.close()
     return {"message": f"Imported {imported} transactions!", "total": imported}
+
+# --- AI Insights ---
+@app.get("/insights/{month}")
+def get_insights(month: str, user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    total_income = db.query(func.sum(Income.amount)).filter(Income.user_id == user_id, Income.date.startswith(month)).scalar() or 0
+    total_expenses = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.date.startswith(month)).scalar() or 0
+    category_totals = db.query(Expense.category, func.sum(Expense.amount).label("total")).filter(Expense.user_id == user_id, Expense.date.startswith(month)).group_by(Expense.category).all()
+    budgets = db.query(Budget).filter(Budget.user_id == user_id, Budget.month == month).all()
+    goals = db.query(SavingsGoal).filter(SavingsGoal.user_id == user_id, SavingsGoal.month == month).all()
+    recurring_total = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.recurring == True, Expense.date.startswith(month)).scalar() or 0
+    db.close()
+
+    insights = []
+    balance = total_income - total_expenses
+
+    if total_income > 0:
+        expense_pct = round((total_expenses / total_income) * 100, 1)
+        if expense_pct >= 90:
+            insights.append({"type": "warning", "icon": "⚠️", "title": "High spending alert", "message": f"You've spent {expense_pct}% of your income this month. Try to keep it under 80% to maintain a healthy balance."})
+        elif expense_pct >= 70:
+            insights.append({"type": "info", "icon": "📊", "title": "Spending on track", "message": f"You've spent {expense_pct}% of your income. You're doing well but keep an eye on your spending."})
+        else:
+            insights.append({"type": "success", "icon": "🎉", "title": "Excellent spending habits", "message": f"You've only spent {expense_pct}% of your income this month. Keep it up!"})
+
+    if category_totals:
+        top_category = max(category_totals, key=lambda x: x[1])
+        pct_of_expenses = round((top_category[1] / total_expenses) * 100, 1) if total_expenses > 0 else 0
+        insights.append({"type": "info", "icon": "🏆", "title": "Top spending category", "message": f"Your biggest expense is {top_category[0]} at £{top_category[1]:.2f}, which is {pct_of_expenses}% of your total spending."})
+
+    if recurring_total > 0 and total_income > 0:
+        recurring_pct = round((recurring_total / total_income) * 100, 1)
+        insights.append({"type": "info", "icon": "🔁", "title": "Fixed monthly costs", "message": f"Your recurring expenses total £{recurring_total:.2f}, which is {recurring_pct}% of your income."})
+
+    for b in budgets:
+        db = SessionLocal()
+        spent = db.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id, Expense.category == b.category, Expense.date.startswith(month)).scalar() or 0
+        db.close()
+        pct = round((spent / b.limit_amount) * 100, 1) if b.limit_amount > 0 else 0
+        if pct >= 100:
+            insights.append({"type": "danger", "icon": "🚨", "title": f"{b.category.title()} budget exceeded", "message": f"You've gone over your {b.category} budget by £{spent - b.limit_amount:.2f}. Consider reducing {b.category} spending next month."})
+        elif pct >= 80:
+            insights.append({"type": "warning", "icon": "⚠️", "title": f"{b.category.title()} budget warning", "message": f"You've used {pct}% of your {b.category} budget. Only £{b.limit_amount - spent:.2f} remaining."})
+
+    for g in goals:
+        actual_saved = total_income - total_expenses
+        if actual_saved >= g.target:
+            insights.append({"type": "success", "icon": "🎯", "title": f"{g.name} goal reached!", "message": f"Congratulations! You've hit your {g.name} savings goal of £{g.target:.2f} this month!"})
+        else:
+            remaining = g.target - actual_saved
+            insights.append({"type": "info", "icon": "🎯", "title": f"{g.name} progress", "message": f"You need £{remaining:.2f} more to hit your {g.name} goal. Try cutting back on non-essential spending."})
+
+    if balance > 0:
+        insights.append({"type": "success", "icon": "💰", "title": "Positive balance", "message": f"Great job! You have £{balance:.2f} left over this month. Consider putting it towards your savings goals."})
+    elif balance < 0:
+        insights.append({"type": "danger", "icon": "🔴", "title": "Negative balance", "message": f"You've spent £{abs(balance):.2f} more than you earned this month. Review your expenses to get back on track."})
+
+    if not insights:
+        insights.append({"type": "info", "icon": "💡", "title": "Add more data", "message": "Add your income, expenses and budgets to get personalised insights for this month."})
+
+    return {"month": month, "insights": insights}
