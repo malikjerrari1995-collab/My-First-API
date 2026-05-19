@@ -5,3 +5,5 @@ resend
 passlib
 python-jose
 bcrypt
+python-multipart
+python-multipart
