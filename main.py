@@ -176,6 +176,18 @@ def register(user: UserRegister):
     if existing:
         db.close()
         raise HTTPException(status_code=400, detail="Email already registered")
+    if existing:
+        db.close()
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if len(user.password) < 8:
+        db.close()
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not any(c.isdigit() for c in user.password):
+        db.close()
+        raise HTTPException(status_code=400, detail="Password must contain at least one number")
+    if not any(c.isupper() for c in user.password):
+        db.close()
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
     new_user = User(email=user.email, password=hash_password(user.password), name=user.name)
     db.add(new_user)
     db.commit()

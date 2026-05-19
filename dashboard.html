@@ -128,8 +128,12 @@
     <div class="auth-form" id="register-form" style="display:none">
       <input type="text" id="reg-name" placeholder="Your name">
       <input type="text" id="reg-email" placeholder="Email address">
-      <input type="password" id="reg-password" placeholder="Password">
-      <div class="auth-error" id="reg-error">Something went wrong</div>
+<input type="password" id="reg-password" placeholder="Password" oninput="checkPassword(this.value)">
+<div id="password-rules" style="font-size:11px;margin-top:4px;display:flex;flex-direction:column;gap:3px;">
+  <div id="rule-length" style="color:var(--text3)">✗ At least 8 characters</div>
+  <div id="rule-number" style="color:var(--text3)">✗ At least one number</div>
+  <div id="rule-upper" style="color:var(--text3)">✗ At least one uppercase letter</div>
+</div>      <div class="auth-error" id="reg-error">Something went wrong</div>
       <button class="auth-btn" onclick="register()">Create Account</button>
     </div>
   </div>
@@ -375,6 +379,14 @@ if (token) {
   showApp();
 } else {
   document.getElementById('auth-screen').style.display = 'flex';
+}
+function checkPassword(val) {
+  document.getElementById('rule-length').style.color = val.length >= 8 ? 'var(--success)' : 'var(--text3)';
+  document.getElementById('rule-length').textContent = val.length >= 8 ? '✓ At least 8 characters' : '✗ At least 8 characters';
+  document.getElementById('rule-number').style.color = /\d/.test(val) ? 'var(--success)' : 'var(--text3)';
+  document.getElementById('rule-number').textContent = /\d/.test(val) ? '✓ At least one number' : '✗ At least one number';
+  document.getElementById('rule-upper').style.color = /[A-Z]/.test(val) ? 'var(--success)' : 'var(--text3)';
+  document.getElementById('rule-upper').textContent = /[A-Z]/.test(val) ? '✓ At least one uppercase letter' : '✗ At least one uppercase letter';
 }
 </script>
 </body>
