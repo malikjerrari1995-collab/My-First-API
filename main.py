@@ -1,5 +1,8 @@
 import resend
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
+import csv
+import io
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
@@ -299,3 +302,31 @@ def get_summary(month: str):
     db.close()
     balance = round(total_income - total_expenses, 2)
     return {"month": month, "total_income": round(total_income, 2), "total_expenses": round(total_expenses, 2), "recurring_expenses": round(recurring_total, 2), "balance": balance, "balance_status": "surplus" if balance >= 0 else "deficit", "spending_by_category": [{"category": c, "total": round(t, 2)} for c, t in sorted(category_totals, key=lambda x: x[1], reverse=True)], "alerts": alerts}
+
+@app.get("/export/{month}")
+def export_expenses(month: str):
+    db = SessionLocal()
+    expenses = db.query(Expense).filter(Expense.date.startswith(month)).order_by(Expense.date.desc()).all()
+    income = db.query(Income).filter(Income.date.startswith(month)).order_by(Income.date.desc()).all()
+    db.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["EXPENSES"])
+    writer.writerow(["ID", "Date", "Category", "Description", "Amount", "Recurring"])
+    for e in expenses:
+        writer.writerow([e.id, e.date, e.category, e.description or "", f"£{e.amount:.2f}", "Yes" if e.recurring else "No"])
+
+    writer.writerow([])
+    writer.writerow(["INCOME"])
+    writer.writerow(["ID", "Date", "Source", "Description", "Amount"])
+    for i in income:
+        writer.writerow([i.id, i.date, i.source, i.description or "", f"£{i.amount:.2f}"])
+
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"}
+    )
