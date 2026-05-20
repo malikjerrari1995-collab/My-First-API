@@ -5,7 +5,7 @@ import requests
 from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
@@ -165,6 +165,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Serve dashboard ---
+@app.get("/")
+def serve_dashboard():
+    return FileResponse("dashboard.html")
 
 # --- Health ---
 @app.get("/health")
