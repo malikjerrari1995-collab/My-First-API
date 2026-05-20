@@ -13,7 +13,11 @@
     --success: #6af7c0; --warning: #f7c86a; --danger: #f76a8a;
     --radius: 16px; --radius-sm: 10px;
   }
-  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body.light {
+    --bg: #f5f5f8; --surface: #ffffff; --surface2: #f0f0f5; --border: #e0e0ea;
+    --text: #1a1a2e; --text2: #5a5a72; --text3: #9090a8;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; transition: background 0.2s, color 0.2s; }
   #auth-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 0%, rgba(124,106,247,0.15) 0%, transparent 60%); }
   .auth-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 40px; width: 100%; max-width: 420px; }
   .auth-logo { font-family: 'DM Serif Display', serif; font-size: 28px; margin-bottom: 8px; }
@@ -29,10 +33,11 @@
   .auth-btn { background: var(--accent); color: white; border: none; padding: 13px; border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500; cursor: pointer; }
   .auth-btn:hover { background: #6a58e8; }
   .auth-error { color: var(--danger); font-size: 13px; text-align: center; display: none; }
-  .pw-rules { display: flex; flex-direction: column; gap: 3px; margin-top: -8px; }
+  .pw-rules { display: flex; flex-direction: column; gap: 3px; }
   .pw-rule { font-size: 11px; color: var(--text3); transition: color 0.2s; }
   #app-screen { display: none; }
   header { padding: 20px 40px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: rgba(15,15,19,0.9); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 100; }
+  body.light header { background: rgba(245,245,248,0.9); }
   .logo { font-family: 'DM Serif Display', serif; font-size: 20px; }
   .logo span { color: var(--accent); }
   .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -48,14 +53,15 @@
   #alerts-banner { margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px; }
   .alert-item { background: rgba(247,106,138,0.1); border: 1px solid rgba(247,106,138,0.3); border-radius: var(--radius-sm); padding: 12px 16px; font-size: 13px; color: var(--danger); }
   .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; transition: border-color 0.2s; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; transition: border-color 0.2s; margin-bottom: 0; }
   .card:hover { border-color: var(--accent); }
   .card-label { font-size: 11px; font-weight: 500; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
   .card-value { font-family: 'DM Serif Display', serif; font-size: 28px; letter-spacing: -1px; line-height: 1; margin-bottom: 4px; }
   .card-sub { font-size: 11px; color: var(--text3); }
   .positive { color: var(--success); } .negative { color: var(--danger); } .neutral { color: var(--accent); }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
-  .full-col { margin-bottom: 18px; }
+  .row { display: grid; gap: 18px; margin-bottom: 18px; }
+  .two-col { grid-template-columns: 1fr 1fr; }
+  .one-col { grid-template-columns: 1fr; }
   .section-title { font-family: 'DM Serif Display', serif; font-size: 17px; margin-bottom: 14px; }
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .form-group { display: flex; flex-direction: column; gap: 5px; }
@@ -79,11 +85,12 @@
   .expense-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
   .expense-item:last-child { border-bottom: none; }
   .expense-left { display: flex; align-items: center; gap: 10px; }
-  .expense-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .expense-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
   .expense-name { font-size: 13px; font-weight: 500; }
   .expense-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
   .expense-right { display: flex; align-items: center; gap: 8px; }
   .expense-amount { font-size: 14px; font-weight: 600; color: var(--danger); }
+  .income-amount { font-size: 14px; font-weight: 600; color: var(--success); }
   .del-btn { background: transparent; border: none; color: var(--text3); cursor: pointer; font-size: 14px; padding: 2px; }
   .del-btn:hover { color: var(--danger); }
   .badge { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 20px; font-weight: 500; margin-left: 5px; background: rgba(124,106,247,0.15); color: var(--accent); }
@@ -101,16 +108,38 @@
   .insight-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
   .insight-msg { font-size: 12px; color: var(--text2); line-height: 1.5; }
   .insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .compare-card { flex: 1; min-width: 140px; background: var(--surface2); border-radius: var(--radius-sm); padding: 12px 16px; }
+  .compare-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  .compare-value { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+  .compare-sub { font-size: 12px; color: var(--text2); }
+  .divider { margin: 14px 0; border: none; border-top: 1px solid var(--border); }
   #toast { position: fixed; bottom: 28px; right: 28px; background: var(--success); color: #0f0f13; padding: 11px 18px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; opacity: 0; transform: translateY(10px); transition: all 0.3s; z-index: 999; pointer-events: none; }
   #toast.show { opacity: 1; transform: translateY(0); }
   .empty { color: var(--text3); font-size: 13px; padding: 14px 0; text-align: center; }
   .loading { color: var(--text3); font-size: 13px; padding: 10px 0; }
-  .divider { margin: 16px 0 14px; border: none; border-top: 1px solid var(--border); }
+  @media (max-width: 768px) {
+    header { padding: 16px 20px; flex-wrap: wrap; gap: 10px; }
+    .user-name { display: none; }
+    main { padding: 20px; }
+    .summary-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .two-col { grid-template-columns: 1fr; }
+    .card { padding: 16px; }
+    .card-value { font-size: 22px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .form-group.full { grid-column: 1; }
+    .checkbox-row { grid-column: 1; }
+    .form-actions { grid-column: 1; }
+    .insights-grid { grid-template-columns: 1fr; }
+    .btn { padding: 7px 12px; font-size: 12px; }
+  }
+  @media (max-width: 480px) {
+    .summary-grid { grid-template-columns: 1fr; }
+    main { padding: 16px; }
+  }
 </style>
 </head>
 <body>
 
-<!-- AUTH -->
 <div id="auth-screen">
   <div class="auth-box">
     <div class="auth-logo">finance<span>.</span></div>
@@ -140,7 +169,6 @@
   </div>
 </div>
 
-<!-- APP -->
 <div id="app-screen">
   <header>
     <div class="logo">finance<span>.</span></div>
@@ -149,13 +177,12 @@
       <input type="month" id="month-picker" class="month-inp">
       <button class="btn btn-primary" onclick="loadAll()">Load</button>
       <button class="btn btn-ghost" onclick="exportCSV()">Export CSV</button>
+      <button class="btn btn-ghost" onclick="toggleTheme()" id="theme-btn">☀️ Light</button>
       <button class="btn btn-danger" onclick="logout()">Logout</button>
     </div>
   </header>
   <main>
     <div id="alerts-banner"></div>
-
-    <!-- SUMMARY CARDS -->
     <div class="summary-grid">
       <div class="card"><div class="card-label">Income</div><div class="card-value positive" id="card-income">—</div><div class="card-sub">this month</div></div>
       <div class="card"><div class="card-label">Expenses</div><div class="card-value negative" id="card-expenses">—</div><div class="card-sub">this month</div></div>
@@ -163,19 +190,27 @@
       <div class="card"><div class="card-label">Recurring</div><div class="card-value neutral" id="card-recurring">—</div><div class="card-sub">fixed monthly</div></div>
     </div>
 
-    <!-- INSIGHTS -->
-    <div class="card full-col">
-      <div class="section-title">💡 Smart Insights</div>
-      <div id="insights-list"><div class="loading">Loading...</div></div>
+    <div class="row one-col" style="margin-bottom:18px;">
+      <div class="card" style="padding:16px 22px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div class="section-title" style="margin-bottom:0;">📊 Month vs Last Month</div>
+        </div>
+        <div id="comparison-list" style="display:flex;gap:14px;flex-wrap:wrap;"><div class="loading">Loading...</div></div>
+      </div>
     </div>
 
-    <!-- BUDGETS + SAVINGS -->
-    <div class="two-col">
+    <div class="row one-col" style="margin-bottom:18px;">
+      <div class="card">
+        <div class="section-title">💡 Smart Insights</div>
+        <div id="insights-list"><div class="loading">Loading...</div></div>
+      </div>
+    </div>
+
+    <div class="row two-col">
       <div class="card">
         <div class="section-title">Budgets</div>
-        <div class="form-grid" style="margin-bottom:16px;">
-          <div class="form-group">
-            <label>Category</label>
+        <div class="form-grid" style="margin-bottom:14px;">
+          <div class="form-group"><label>Category</label>
             <select id="budget-category">
               <option value="food">Food</option><option value="transport">Transport</option>
               <option value="entertainment">Entertainment</option><option value="fitness">Fitness</option>
@@ -183,10 +218,7 @@
               <option value="utilities">Utilities</option><option value="other">Other</option>
             </select>
           </div>
-          <div class="form-group">
-            <label>Monthly limit (£)</label>
-            <input type="number" id="budget-amount" placeholder="0.00" step="0.01">
-          </div>
+          <div class="form-group"><label>Monthly limit (£)</label><input type="number" id="budget-amount" placeholder="0.00" step="0.01"></div>
           <div class="form-actions"><button class="btn btn-primary" onclick="addBudget()">Set Budget</button></div>
         </div>
         <hr class="divider">
@@ -194,15 +226,9 @@
       </div>
       <div class="card">
         <div class="section-title">Savings Goals</div>
-        <div class="form-grid" style="margin-bottom:16px;">
-          <div class="form-group">
-            <label>Goal name</label>
-            <input type="text" id="goal-name" placeholder="e.g. Holiday fund">
-          </div>
-          <div class="form-group">
-            <label>Target (£)</label>
-            <input type="number" id="goal-amount" placeholder="0.00" step="0.01">
-          </div>
+        <div class="form-grid" style="margin-bottom:14px;">
+          <div class="form-group"><label>Goal name</label><input type="text" id="goal-name" placeholder="e.g. Holiday fund"></div>
+          <div class="form-group"><label>Target (£)</label><input type="number" id="goal-amount" placeholder="0.00" step="0.01"></div>
           <div class="form-actions"><button class="btn btn-primary" onclick="addSavingsGoal()">Set Goal</button></div>
         </div>
         <hr class="divider">
@@ -210,8 +236,7 @@
       </div>
     </div>
 
-    <!-- ADD INCOME + ADD EXPENSE -->
-    <div class="two-col">
+    <div class="row two-col">
       <div class="card">
         <div class="section-title">Add Income</div>
         <div class="form-grid">
@@ -246,255 +271,331 @@
       </div>
     </div>
 
-    <!-- EXPENSES + CHART -->
-    <div class="two-col">
-      <div class="card"><div class="section-title">Recent Expenses</div><div id="expenses-list"><div class="loading">Loading...</div></div></div>
-      <div class="card"><div class="section-title">Spending by Category</div><div id="chart-list"><div class="loading">Loading...</div></div></div>
+    <div class="row two-col">
+      <div class="card">
+        <div class="section-title">Recent Expenses</div>
+        <div id="expenses-list"><div class="loading">Loading...</div></div>
+      </div>
+      <div class="card">
+        <div class="section-title">Spending by Category</div>
+        <div id="chart-list"><div class="loading">Loading...</div></div>
+      </div>
     </div>
+
+    <div class="row one-col" style="margin-bottom:18px;">
+      <div class="card">
+        <div class="section-title">Income History</div>
+        <div id="income-list"><div class="loading">Loading...</div></div>
+      </div>
+    </div>
+
   </main>
 </div>
 
 <div id="toast"></div>
 
 <script>
-const API = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+const API = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
   ? 'http://127.0.0.1:8000'
   : 'https://my-first-api-production-0383.up.railway.app';
 
 const ICONS = { food:'🍔', transport:'🚗', entertainment:'🎬', fitness:'💪', rent:'🏠', shopping:'🛍️', utilities:'💡', other:'📦' };
-const INSIGHT_COLORS = { success: 'var(--success)', warning: 'var(--warning)', danger: 'var(--danger)', info: 'var(--accent)' };
+const ICOLORS = { success:'var(--success)', warning:'var(--warning)', danger:'var(--danger)', info:'var(--accent)' };
 
 let token = localStorage.getItem('fin_token');
 let userName = localStorage.getItem('fin_user');
 
-function getHeaders() { return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }; }
+function hdrs() { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }; }
 function getMonth() { return document.getElementById('month-picker').value; }
 function fmt(n) { return '£' + parseFloat(n).toFixed(2); }
+function round(n, d) { return Math.round(n * Math.pow(10,d)) / Math.pow(10,d); }
 
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 3000);
+  setTimeout(function() { t.classList.remove('show'); }, 3000);
 }
 
 function showTab(tab) {
-  document.querySelectorAll('.auth-tab').forEach((t, i) => t.classList.toggle('active', (tab==='login'&&i===0)||(tab==='register'&&i===1)));
+  document.querySelectorAll('.auth-tab').forEach(function(t, i) {
+    t.classList.toggle('active', (tab==='login'&&i===0)||(tab==='register'&&i===1));
+  });
   document.getElementById('login-form').style.display = tab==='login' ? 'flex' : 'none';
   document.getElementById('register-form').style.display = tab==='register' ? 'flex' : 'none';
 }
 
 function checkPassword(val) {
-  const setRule = (id, ok, text) => { const el = document.getElementById(id); el.textContent = (ok?'✓ ':'✗ ')+text; el.style.color = ok ? 'var(--success)' : 'var(--text3)'; };
+  function setRule(id, ok, text) {
+    var el = document.getElementById(id);
+    el.textContent = (ok ? '✓ ' : '✗ ') + text;
+    el.style.color = ok ? 'var(--success)' : 'var(--text3)';
+  }
   setRule('rule-length', val.length >= 8, 'At least 8 characters');
   setRule('rule-number', /\d/.test(val), 'At least one number');
   setRule('rule-upper', /[A-Z]/.test(val), 'At least one uppercase letter');
 }
 
+function toggleTheme() {
+  var isLight = document.body.classList.toggle('light');
+  document.getElementById('theme-btn').textContent = isLight ? '🌙 Dark' : '☀️ Light';
+  localStorage.setItem('fin_theme', isLight ? 'light' : 'dark');
+}
+
 async function login() {
-  const email = document.getElementById('login-email').value;
-  const password = document.getElementById('login-password').value;
+  var email = document.getElementById('login-email').value;
+  var password = document.getElementById('login-password').value;
   if (!email || !password) return;
   try {
-    const res = await fetch(`${API}/login`, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:`username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}` });
-    const data = await res.json();
-    if (!res.ok) { document.getElementById('login-error').style.display='block'; return; }
-    document.getElementById('login-error').style.display='none';
-    token = data.access_token; userName = data.name || email;
-    localStorage.setItem('fin_token', token); localStorage.setItem('fin_user', userName);
+    var res = await fetch(API + '/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'username=' + encodeURIComponent(email) + '&password=' + encodeURIComponent(password)
+    });
+    var data = await res.json();
+    if (!res.ok) { document.getElementById('login-error').style.display = 'block'; return; }
+    document.getElementById('login-error').style.display = 'none';
+    token = data.access_token;
+    userName = data.name || email;
+    localStorage.setItem('fin_token', token);
+    localStorage.setItem('fin_user', userName);
     showApp();
-  } catch(e) { document.getElementById('login-error').style.display='block'; }
+  } catch(e) {
+    document.getElementById('login-error').style.display = 'block';
+  }
 }
 
 async function register() {
-  const name = document.getElementById('reg-name').value;
-  const email = document.getElementById('reg-email').value;
-  const password = document.getElementById('reg-password').value;
+  var name = document.getElementById('reg-name').value;
+  var email = document.getElementById('reg-email').value;
+  var password = document.getElementById('reg-password').value;
   if (!email || !password) return;
   try {
-    const res = await fetch(`${API}/register`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email,password,name}) });
-    const data = await res.json();
-    if (!res.ok) { const el = document.getElementById('reg-error'); el.textContent = data.detail||'Something went wrong'; el.style.display='block'; return; }
-    document.getElementById('reg-error').style.display='none';
-    token = data.token; userName = data.name || email;
-    localStorage.setItem('fin_token', token); localStorage.setItem('fin_user', userName);
+    var res = await fetch(API + '/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: password, name: name })
+    });
+    var data = await res.json();
+    if (!res.ok) {
+      var el = document.getElementById('reg-error');
+      el.textContent = data.detail || 'Something went wrong';
+      el.style.display = 'block';
+      return;
+    }
+    document.getElementById('reg-error').style.display = 'none';
+    token = data.token;
+    userName = data.name || email;
+    localStorage.setItem('fin_token', token);
+    localStorage.setItem('fin_user', userName);
     showApp();
-  } catch(e) { document.getElementById('reg-error').style.display='block'; }
+  } catch(e) {
+    document.getElementById('reg-error').style.display = 'block';
+  }
 }
 
 function logout() {
-  localStorage.removeItem('fin_token'); localStorage.removeItem('fin_user');
-  token = null; userName = null;
-  document.getElementById('auth-screen').style.display='flex';
-  document.getElementById('app-screen').style.display='none';
+  localStorage.removeItem('fin_token');
+  localStorage.removeItem('fin_user');
+  token = null;
+  userName = null;
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('app-screen').style.display = 'none';
 }
 
 function showApp() {
-  document.getElementById('auth-screen').style.display='none';
-  document.getElementById('app-screen').style.display='block';
-  document.getElementById('user-name').textContent=`Hi, ${userName}!`;
-  const now = new Date();
-  document.getElementById('month-picker').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display = 'block';
+  document.getElementById('user-name').textContent = 'Hi, ' + userName + '!';
+  var now = new Date();
+  document.getElementById('month-picker').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  var savedTheme = localStorage.getItem('fin_theme');
+  if (savedTheme === 'light') { document.body.classList.add('light'); document.getElementById('theme-btn').textContent = '🌙 Dark'; }
   loadAll();
 }
 
-async function loadAll() {
-  const month = getMonth();
+function loadAll() {
+  var month = getMonth();
   if (!month) return;
   loadSummary(month);
   loadBudgets(month);
   loadSavings(month);
   loadExpenses(month);
   loadInsights(month);
+  loadComparison(month);
+  loadIncomeHistory(month);
 }
 
 async function loadSummary(month) {
   try {
-    const res = await fetch(`${API}/summary/${month}`, {headers:getHeaders()});
-    if (res.status===401) { logout(); return; }
-    const data = await res.json();
+    var res = await fetch(API + '/summary/' + month, { headers: hdrs() });
+    if (res.status === 401) { logout(); return; }
+    var data = await res.json();
     document.getElementById('card-income').textContent = fmt(data.total_income);
     document.getElementById('card-expenses').textContent = fmt(data.total_expenses);
-    const bal = document.getElementById('card-balance');
+    var bal = document.getElementById('card-balance');
     bal.textContent = fmt(data.balance);
-    bal.className = 'card-value '+(data.balance>=0?'positive':'negative');
+    bal.className = 'card-value ' + (data.balance >= 0 ? 'positive' : 'negative');
     document.getElementById('card-balance-status').textContent = data.balance_status;
-    document.getElementById('card-recurring').textContent = fmt(data.recurring_expenses||0);
-    const banner = document.getElementById('alerts-banner'); banner.innerHTML='';
-    (data.alerts||[]).forEach(a => { banner.innerHTML+=`<div class="alert-item">⚠️ ${a}</div>`; });
-    const catList = document.getElementById('chart-list');
-    if (data.spending_by_category && data.spending_by_category.length>0) {
-      const max = Math.max(...data.spending_by_category.map(c=>c.total));
-      catList.innerHTML = data.spending_by_category.map(c=>`
-        <div class="chart-bar">
-          <div class="chart-label">${ICONS[c.category]||'📦'} ${c.category}</div>
-          <div class="chart-track"><div class="chart-fill" style="width:${(c.total/max)*100}%"></div></div>
-          <div class="chart-value">${fmt(c.total)}</div>
-        </div>`).join('');
-    } else { catList.innerHTML='<div class="empty">No expenses this month</div>'; }
-  } catch(e) { console.error(e); }
+    document.getElementById('card-recurring').textContent = fmt(data.recurring_expenses || 0);
+    var banner = document.getElementById('alerts-banner');
+    banner.innerHTML = '';
+    (data.alerts || []).forEach(function(a) { banner.innerHTML += '<div class="alert-item">⚠️ ' + a + '</div>'; });
+    var catList = document.getElementById('chart-list');
+    if (data.spending_by_category && data.spending_by_category.length > 0) {
+      var max = Math.max.apply(null, data.spending_by_category.map(function(c) { return c.total; }));
+      catList.innerHTML = data.spending_by_category.map(function(c) {
+        return '<div class="chart-bar"><div class="chart-label">' + (ICONS[c.category]||'📦') + ' ' + c.category + '</div><div class="chart-track"><div class="chart-fill" style="width:' + (c.total/max*100) + '%"></div></div><div class="chart-value">' + fmt(c.total) + '</div></div>';
+      }).join('');
+    } else { catList.innerHTML = '<div class="empty">No expenses this month</div>'; }
+  } catch(e) { console.error('summary error', e); }
 }
 
 async function loadBudgets(month) {
   try {
-    const res = await fetch(`${API}/budgets?month=${month}`, {headers:getHeaders()});
-    const data = await res.json();
-    const list = document.getElementById('budgets-list');
-    if (!data.budgets||data.budgets.length===0) { list.innerHTML='<div class="empty">No budgets set</div>'; return; }
-    list.innerHTML = data.budgets.map(b => {
-      const pct = Math.min(b.percentage,100);
-      const cls = b.percentage>=100?'progress-over':b.percentage>=80?'progress-warn':'progress-ok';
-      const sc = b.percentage>=100?'var(--danger)':b.percentage>=80?'var(--warning)':'var(--success)';
-      return `<div class="budget-item"><div class="budget-header"><span class="budget-name">${ICONS[b.category]||'📦'} ${b.category}</span><span class="budget-amounts">${fmt(b.spent)} / ${fmt(b.limit)}</span></div><div class="progress-track"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div><div class="budget-status" style="color:${sc}">${b.status} — ${b.percentage}%</div></div>`;
+    var res = await fetch(API + '/budgets?month=' + month, { headers: hdrs() });
+    var data = await res.json();
+    var list = document.getElementById('budgets-list');
+    if (!data.budgets || data.budgets.length === 0) { list.innerHTML = '<div class="empty">No budgets set</div>'; return; }
+    list.innerHTML = data.budgets.map(function(b) {
+      var pct = Math.min(b.percentage, 100);
+      var cls = b.percentage >= 100 ? 'progress-over' : b.percentage >= 80 ? 'progress-warn' : 'progress-ok';
+      var sc = b.percentage >= 100 ? 'var(--danger)' : b.percentage >= 80 ? 'var(--warning)' : 'var(--success)';
+      return '<div class="budget-item"><div class="budget-header"><span class="budget-name">' + (ICONS[b.category]||'📦') + ' ' + b.category + '</span><span class="budget-amounts">' + fmt(b.spent) + ' / ' + fmt(b.limit) + '</span></div><div class="progress-track"><div class="progress-fill ' + cls + '" style="width:' + pct + '%"></div></div><div class="budget-status" style="color:' + sc + '">' + b.status + ' — ' + b.percentage + '%</div></div>';
     }).join('');
-  } catch(e) { document.getElementById('budgets-list').innerHTML='<div class="empty">Could not load</div>'; }
+  } catch(e) { document.getElementById('budgets-list').innerHTML = '<div class="empty">Could not load</div>'; }
 }
 
 async function loadSavings(month) {
   try {
-    const res = await fetch(`${API}/savings/${month}`, {headers:getHeaders()});
-    const data = await res.json();
-    const list = document.getElementById('savings-list');
-    if (!data.goals||data.goals.length===0) { list.innerHTML='<div class="empty">No savings goals set</div>'; return; }
-    list.innerHTML = data.goals.map(g => {
-      const pct = Math.min(g.percentage,100);
-      const cls = g.percentage>=100?'progress-ok':g.percentage>=50?'progress-warn':'progress-over';
-      return `<div class="savings-item"><div class="savings-header"><span class="savings-name">🎯 ${g.name}</span><span class="savings-pct">${g.percentage}%</span></div><div class="progress-track"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div><div class="savings-status">${fmt(g.saved_so_far)} saved of ${fmt(g.target)} — ${g.status}</div></div>`;
+    var res = await fetch(API + '/savings/' + month, { headers: hdrs() });
+    var data = await res.json();
+    var list = document.getElementById('savings-list');
+    if (!data.goals || data.goals.length === 0) { list.innerHTML = '<div class="empty">No savings goals set</div>'; return; }
+    list.innerHTML = data.goals.map(function(g) {
+      var pct = Math.min(g.percentage, 100);
+      var cls = g.percentage >= 100 ? 'progress-ok' : g.percentage >= 50 ? 'progress-warn' : 'progress-over';
+      return '<div class="savings-item"><div class="savings-header"><span class="savings-name">🎯 ' + g.name + '</span><span class="savings-pct">' + g.percentage + '%</span></div><div class="progress-track"><div class="progress-fill ' + cls + '" style="width:' + pct + '%"></div></div><div class="savings-status">' + fmt(g.saved_so_far) + ' saved of ' + fmt(g.target) + ' — ' + g.status + '</div></div>';
     }).join('');
-  } catch(e) { document.getElementById('savings-list').innerHTML='<div class="empty">Could not load</div>'; }
+  } catch(e) { document.getElementById('savings-list').innerHTML = '<div class="empty">Could not load</div>'; }
 }
 
 async function loadExpenses(month) {
   try {
-    const res = await fetch(`${API}/expenses?month=${month}`, {headers:getHeaders()});
-    const data = await res.json();
-    const list = document.getElementById('expenses-list');
-    if (!data.expenses||data.expenses.length===0) { list.innerHTML='<div class="empty">No expenses this month</div>'; return; }
-    list.innerHTML = data.expenses.slice(0,10).map(e=>`
-      <div class="expense-item">
-        <div class="expense-left">
-          <div class="expense-icon">${ICONS[e.category]||'📦'}</div>
-          <div>
-            <div class="expense-name">${e.description||e.category}${e.recurring?'<span class="badge">recurring</span>':''}</div>
-            <div class="expense-meta">${e.category} · ${e.date}</div>
-          </div>
-        </div>
-        <div class="expense-right">
-          <div class="expense-amount">${fmt(e.amount)}</div>
-          <button class="del-btn" onclick="deleteExpense(${e.id})">🗑️</button>
-        </div>
-      </div>`).join('');
-  } catch(e) { document.getElementById('expenses-list').innerHTML='<div class="empty">Could not load</div>'; }
+    var res = await fetch(API + '/expenses?month=' + month, { headers: hdrs() });
+    var data = await res.json();
+    var list = document.getElementById('expenses-list');
+    if (!data.expenses || data.expenses.length === 0) { list.innerHTML = '<div class="empty">No expenses this month</div>'; return; }
+    list.innerHTML = data.expenses.slice(0, 10).map(function(e) {
+      return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">' + (ICONS[e.category]||'📦') + '</div><div><div class="expense-name">' + (e.description||e.category) + (e.recurring ? '<span class="badge">recurring</span>' : '') + '</div><div class="expense-meta">' + e.category + ' · ' + e.date + '</div></div></div><div class="expense-right"><div class="expense-amount">' + fmt(e.amount) + '</div><button class="del-btn" onclick="deleteExpense(' + e.id + ')">🗑️</button></div></div>';
+    }).join('');
+  } catch(e) { document.getElementById('expenses-list').innerHTML = '<div class="empty">Could not load</div>'; }
 }
 
 async function loadInsights(month) {
   try {
-    const res = await fetch(`${API}/insights/${month}`, {headers:getHeaders()});
-    const data = await res.json();
-    const list = document.getElementById('insights-list');
-    if (!data.insights||data.insights.length===0) { list.innerHTML='<div class="empty">Add data to see insights</div>'; return; }
-    list.innerHTML = `<div class="insights-grid">${data.insights.map(i=>`
-      <div class="insight-card" style="border-left-color:${INSIGHT_COLORS[i.type]||'var(--accent)'}">
-        <div class="insight-title">${i.icon} ${i.title}</div>
-        <div class="insight-msg">${i.message}</div>
-      </div>`).join('')}</div>`;
-  } catch(e) { document.getElementById('insights-list').innerHTML='<div class="empty">Could not load insights</div>'; }
+    var res = await fetch(API + '/insights/' + month, { headers: hdrs() });
+    var data = await res.json();
+    var list = document.getElementById('insights-list');
+    if (!data.insights || data.insights.length === 0) { list.innerHTML = '<div class="empty">Add data to see insights</div>'; return; }
+    list.innerHTML = '<div class="insights-grid">' + data.insights.map(function(i) {
+      return '<div class="insight-card" style="border-left-color:' + (ICOLORS[i.type]||'var(--accent)') + '"><div class="insight-title">' + i.icon + ' ' + i.title + '</div><div class="insight-msg">' + i.message + '</div></div>';
+    }).join('') + '</div>';
+  } catch(e) { document.getElementById('insights-list').innerHTML = '<div class="empty">Could not load insights</div>'; }
+}
+
+async function loadComparison(month) {
+  try {
+    var parts = month.split('-');
+    var year = parseInt(parts[0]);
+    var mon = parseInt(parts[1]);
+    var prevMonth = mon === 1 ? (year-1) + '-12' : year + '-' + String(mon-1).padStart(2,'0');
+    var r1 = await fetch(API + '/summary/' + month, { headers: hdrs() });
+    var r2 = await fetch(API + '/summary/' + prevMonth, { headers: hdrs() });
+    var curr = await r1.json();
+    var prev = await r2.json();
+    var list = document.getElementById('comparison-list');
+    function diff(a, b) { return b === 0 ? null : round(((a-b)/b)*100, 1); }
+    function arrow(pct, inv) {
+      if (pct === null) return '';
+      var up = pct > 0;
+      var good = inv ? !up : up;
+      return '<span style="color:' + (good?'var(--success)':'var(--danger)') + ';font-size:12px;margin-left:4px">' + (up?'↑':'↓') + ' ' + Math.abs(pct) + '%</span>';
+    }
+    list.innerHTML =
+      '<div class="compare-card"><div class="compare-label">INCOME</div><div class="compare-value">' + fmt(curr.total_income) + arrow(diff(curr.total_income, prev.total_income)) + '</div><div class="compare-sub">vs ' + fmt(prev.total_income) + '</div></div>' +
+      '<div class="compare-card"><div class="compare-label">EXPENSES</div><div class="compare-value">' + fmt(curr.total_expenses) + arrow(diff(curr.total_expenses, prev.total_expenses), true) + '</div><div class="compare-sub">vs ' + fmt(prev.total_expenses) + '</div></div>' +
+      '<div class="compare-card"><div class="compare-label">BALANCE</div><div class="compare-value">' + fmt(curr.balance) + arrow(diff(curr.balance, prev.balance)) + '</div><div class="compare-sub">vs ' + fmt(prev.balance) + '</div></div>';
+  } catch(e) { document.getElementById('comparison-list').innerHTML = '<div class="empty">Could not load comparison</div>'; }
+}
+
+async function loadIncomeHistory(month) {
+  try {
+    var res = await fetch(API + '/income?month=' + month, { headers: hdrs() });
+    var data = await res.json();
+    var list = document.getElementById('income-list');
+    if (!data.income || data.income.length === 0) { list.innerHTML = '<div class="empty">No income this month</div>'; return; }
+    list.innerHTML = '<div style="margin-bottom:8px;font-size:13px;color:var(--text2)">Total: <strong style="color:var(--success)">' + fmt(data.total) + '</strong></div>' +
+      data.income.map(function(i) {
+        return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">💰</div><div><div class="expense-name">' + (i.description||i.source) + '</div><div class="expense-meta">' + i.source + ' · ' + i.date + '</div></div></div><div class="income-amount">' + fmt(i.amount) + '</div></div>';
+      }).join('');
+  } catch(e) { document.getElementById('income-list').innerHTML = '<div class="empty">Could not load income</div>'; }
 }
 
 async function addIncome() {
-  const amount = parseFloat(document.getElementById('inc-amount').value);
-  const source = document.getElementById('inc-source').value;
-  const description = document.getElementById('inc-desc').value;
-  if (!amount||amount<=0) { alert('Please enter a valid amount'); return; }
+  var amount = parseFloat(document.getElementById('inc-amount').value);
+  var source = document.getElementById('inc-source').value;
+  var description = document.getElementById('inc-desc').value;
+  if (!amount || amount <= 0) { alert('Please enter a valid amount'); return; }
   try {
-    await fetch(`${API}/income`, {method:'POST', headers:getHeaders(), body:JSON.stringify({amount,source,description})});
+    await fetch(API + '/income', { method: 'POST', headers: hdrs(), body: JSON.stringify({ amount: amount, source: source, description: description }) });
     showToast('✅ Income added!');
-    document.getElementById('inc-amount').value='';
-    document.getElementById('inc-desc').value='';
+    document.getElementById('inc-amount').value = '';
+    document.getElementById('inc-desc').value = '';
     loadAll();
   } catch(e) { alert('Could not add income.'); }
 }
 
 async function addExpense() {
-  const amount = parseFloat(document.getElementById('exp-amount').value);
-  const category = document.getElementById('exp-category').value;
-  const description = document.getElementById('exp-desc').value;
-  const recurring = document.getElementById('exp-recurring').checked;
-  if (!amount||amount<=0) { alert('Please enter a valid amount'); return; }
+  var amount = parseFloat(document.getElementById('exp-amount').value);
+  var category = document.getElementById('exp-category').value;
+  var description = document.getElementById('exp-desc').value;
+  var recurring = document.getElementById('exp-recurring').checked;
+  if (!amount || amount <= 0) { alert('Please enter a valid amount'); return; }
   try {
-    const res = await fetch(`${API}/expenses`, {method:'POST', headers:getHeaders(), body:JSON.stringify({amount,category,description,recurring})});
-    const data = await res.json();
+    var res = await fetch(API + '/expenses', { method: 'POST', headers: hdrs(), body: JSON.stringify({ amount: amount, category: category, description: description, recurring: recurring }) });
+    var data = await res.json();
     showToast('✅ Expense added!');
-    if (data.alert) setTimeout(()=>showToast('⚠️ '+data.alert), 1500);
-    document.getElementById('exp-amount').value='';
-    document.getElementById('exp-desc').value='';
-    document.getElementById('exp-recurring').checked=false;
+    if (data.alert) { setTimeout(function() { showToast('⚠️ ' + data.alert); }, 1500); }
+    document.getElementById('exp-amount').value = '';
+    document.getElementById('exp-desc').value = '';
+    document.getElementById('exp-recurring').checked = false;
     loadAll();
   } catch(e) { alert('Could not add expense.'); }
 }
 
 async function addBudget() {
-  const category = document.getElementById('budget-category').value;
-  const limit_amount = parseFloat(document.getElementById('budget-amount').value);
-  if (!limit_amount||limit_amount<=0) { alert('Please enter a valid amount'); return; }
+  var category = document.getElementById('budget-category').value;
+  var limit_amount = parseFloat(document.getElementById('budget-amount').value);
+  if (!limit_amount || limit_amount <= 0) { alert('Please enter a valid amount'); return; }
   try {
-    await fetch(`${API}/budgets`, {method:'POST', headers:getHeaders(), body:JSON.stringify({category,limit_amount})});
+    await fetch(API + '/budgets', { method: 'POST', headers: hdrs(), body: JSON.stringify({ category: category, limit_amount: limit_amount }) });
     showToast('✅ Budget set!');
-    document.getElementById('budget-amount').value='';
+    document.getElementById('budget-amount').value = '';
     loadAll();
   } catch(e) { alert('Could not set budget.'); }
 }
 
 async function addSavingsGoal() {
-  const name = document.getElementById('goal-name').value;
-  const target = parseFloat(document.getElementById('goal-amount').value);
+  var name = document.getElementById('goal-name').value;
+  var target = parseFloat(document.getElementById('goal-amount').value);
   if (!name) { alert('Please enter a goal name'); return; }
-  if (!target||target<=0) { alert('Please enter a valid amount'); return; }
+  if (!target || target <= 0) { alert('Please enter a valid amount'); return; }
   try {
-    await fetch(`${API}/savings`, {method:'POST', headers:getHeaders(), body:JSON.stringify({name,target})});
+    await fetch(API + '/savings', { method: 'POST', headers: hdrs(), body: JSON.stringify({ name: name, target: target }) });
     showToast('✅ Savings goal set!');
-    document.getElementById('goal-name').value='';
-    document.getElementById('goal-amount').value='';
+    document.getElementById('goal-name').value = '';
+    document.getElementById('goal-amount').value = '';
     loadAll();
   } catch(e) { alert('Could not set savings goal.'); }
 }
@@ -502,19 +603,19 @@ async function addSavingsGoal() {
 async function deleteExpense(id) {
   if (!confirm('Delete this expense?')) return;
   try {
-    await fetch(`${API}/expenses/${id}`, {method:'DELETE', headers:getHeaders()});
+    await fetch(API + '/expenses/' + id, { method: 'DELETE', headers: hdrs() });
     showToast('🗑️ Expense deleted!');
     loadAll();
   } catch(e) { alert('Could not delete expense.'); }
 }
 
 function exportCSV() {
-  const month = getMonth();
+  var month = getMonth();
   if (!month) return;
-  window.open(`${API}/export/${month}`, '_blank');
+  window.open(API + '/export/' + month, '_blank');
 }
 
-if (token) { showApp(); } else { document.getElementById('auth-screen').style.display='flex'; }
+if (token) { showApp(); } else { document.getElementById('auth-screen').style.display = 'flex'; }
 </script>
 </body>
 </html>
