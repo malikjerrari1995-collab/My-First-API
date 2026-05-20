@@ -53,7 +53,7 @@
   #alerts-banner { margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px; }
   .alert-item { background: rgba(247,106,138,0.1); border: 1px solid rgba(247,106,138,0.3); border-radius: var(--radius-sm); padding: 12px 16px; font-size: 13px; color: var(--danger); }
   .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; transition: border-color 0.2s; margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; transition: border-color 0.2s; }
   .card:hover { border-color: var(--accent); }
   .card-label { font-size: 11px; font-weight: 500; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
   .card-value { font-family: 'DM Serif Display', serif; font-size: 28px; letter-spacing: -1px; line-height: 1; margin-bottom: 4px; }
@@ -183,6 +183,7 @@
   </header>
   <main>
     <div id="alerts-banner"></div>
+
     <div class="summary-grid">
       <div class="card"><div class="card-label">Income</div><div class="card-value positive" id="card-income">—</div><div class="card-sub">this month</div></div>
       <div class="card"><div class="card-label">Expenses</div><div class="card-value negative" id="card-expenses">—</div><div class="card-sub">this month</div></div>
@@ -190,16 +191,14 @@
       <div class="card"><div class="card-label">Recurring</div><div class="card-value neutral" id="card-recurring">—</div><div class="card-sub">fixed monthly</div></div>
     </div>
 
-    <div class="row one-col" style="margin-bottom:18px;">
+    <div class="row one-col">
       <div class="card" style="padding:16px 22px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-          <div class="section-title" style="margin-bottom:0;">📊 Month vs Last Month</div>
-        </div>
+        <div class="section-title" style="margin-bottom:12px;">📊 Month vs Last Month</div>
         <div id="comparison-list" style="display:flex;gap:14px;flex-wrap:wrap;"><div class="loading">Loading...</div></div>
       </div>
     </div>
 
-    <div class="row one-col" style="margin-bottom:18px;">
+    <div class="row one-col">
       <div class="card">
         <div class="section-title">💡 Smart Insights</div>
         <div id="insights-list"><div class="loading">Loading...</div></div>
@@ -249,6 +248,7 @@
             </select>
           </div>
           <div class="form-group full"><label>Description</label><input type="text" id="inc-desc" placeholder="e.g. Monthly salary"></div>
+          <div class="checkbox-row"><input type="checkbox" id="inc-recurring"><label for="inc-recurring">Recurring monthly income</label></div>
           <div class="form-actions"><button class="btn btn-primary" onclick="addIncome()">Add Income</button></div>
         </div>
       </div>
@@ -282,7 +282,7 @@
       </div>
     </div>
 
-    <div class="row one-col" style="margin-bottom:18px;">
+    <div class="row one-col">
       <div class="card">
         <div class="section-title">Income History</div>
         <div id="income-list"><div class="loading">Loading...</div></div>
@@ -311,7 +311,7 @@ function fmt(n) { return '£' + parseFloat(n).toFixed(2); }
 function round(n, d) { return Math.round(n * Math.pow(10,d)) / Math.pow(10,d); }
 
 function showToast(msg) {
-  const t = document.getElementById('toast');
+  var t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(function() { t.classList.remove('show'); }, 3000);
@@ -397,8 +397,7 @@ async function register() {
 function logout() {
   localStorage.removeItem('fin_token');
   localStorage.removeItem('fin_user');
-  token = null;
-  userName = null;
+  token = null; userName = null;
   document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('app-screen').style.display = 'none';
 }
@@ -448,7 +447,7 @@ async function loadSummary(month) {
         return '<div class="chart-bar"><div class="chart-label">' + (ICONS[c.category]||'📦') + ' ' + c.category + '</div><div class="chart-track"><div class="chart-fill" style="width:' + (c.total/max*100) + '%"></div></div><div class="chart-value">' + fmt(c.total) + '</div></div>';
       }).join('');
     } else { catList.innerHTML = '<div class="empty">No expenses this month</div>'; }
-  } catch(e) { console.error('summary error', e); }
+  } catch(e) { console.error(e); }
 }
 
 async function loadBudgets(month) {
@@ -537,7 +536,7 @@ async function loadIncomeHistory(month) {
     if (!data.income || data.income.length === 0) { list.innerHTML = '<div class="empty">No income this month</div>'; return; }
     list.innerHTML = '<div style="margin-bottom:8px;font-size:13px;color:var(--text2)">Total: <strong style="color:var(--success)">' + fmt(data.total) + '</strong></div>' +
       data.income.map(function(i) {
-        return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">💰</div><div><div class="expense-name">' + (i.description||i.source) + '</div><div class="expense-meta">' + i.source + ' · ' + i.date + '</div></div></div><div class="income-amount">' + fmt(i.amount) + '</div></div>';
+        return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">💰</div><div><div class="expense-name">' + (i.description||i.source) + (i.recurring ? '<span class="badge">recurring</span>' : '') + '</div><div class="expense-meta">' + i.source + ' · ' + i.date + '</div></div></div><div class="expense-right"><div class="income-amount">' + fmt(i.amount) + '</div><button class="del-btn" onclick="deleteIncome(' + i.id + ')">🗑️</button></div></div>';
       }).join('');
   } catch(e) { document.getElementById('income-list').innerHTML = '<div class="empty">Could not load income</div>'; }
 }
@@ -546,12 +545,14 @@ async function addIncome() {
   var amount = parseFloat(document.getElementById('inc-amount').value);
   var source = document.getElementById('inc-source').value;
   var description = document.getElementById('inc-desc').value;
+  var recurring = document.getElementById('inc-recurring').checked;
   if (!amount || amount <= 0) { alert('Please enter a valid amount'); return; }
   try {
-    await fetch(API + '/income', { method: 'POST', headers: hdrs(), body: JSON.stringify({ amount: amount, source: source, description: description }) });
+    await fetch(API + '/income', { method: 'POST', headers: hdrs(), body: JSON.stringify({ amount: amount, source: source, description: description, recurring: recurring }) });
     showToast('✅ Income added!');
     document.getElementById('inc-amount').value = '';
     document.getElementById('inc-desc').value = '';
+    document.getElementById('inc-recurring').checked = false;
     loadAll();
   } catch(e) { alert('Could not add income.'); }
 }
@@ -607,6 +608,15 @@ async function deleteExpense(id) {
     showToast('🗑️ Expense deleted!');
     loadAll();
   } catch(e) { alert('Could not delete expense.'); }
+}
+
+async function deleteIncome(id) {
+  if (!confirm('Delete this income entry?')) return;
+  try {
+    await fetch(API + '/income/' + id, { method: 'DELETE', headers: hdrs() });
+    showToast('🗑️ Income deleted!');
+    loadAll();
+  } catch(e) { alert('Could not delete income.'); }
 }
 
 function exportCSV() {

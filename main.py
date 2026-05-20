@@ -62,6 +62,7 @@ class Income(Base):
     source      = Column(String, nullable=False)
     description = Column(String, nullable=True)
     date        = Column(String, nullable=False)
+    recurring   = Column(Boolean, default=False)
 
 class Budget(Base):
     __tablename__ = "budgets"
@@ -99,6 +100,7 @@ class IncomeInput(BaseModel):
     source:      str
     description: Optional[str] = None
     date:        Optional[str] = None
+    recurring:   Optional[bool] = False
 
 class BudgetInput(BaseModel):
     category:     str
@@ -278,17 +280,29 @@ def delete_expense(expense_id: int, user_id: int = Depends(get_current_user)):
     db.close()
     return {"message": f"Expense {expense_id} deleted!"}
 
+@app.delete("/income/{income_id}")
+def delete_income(income_id: int, user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    income = db.query(Income).filter(Income.id == income_id, Income.user_id == user_id).first()
+    if not income:
+        db.close()
+        raise HTTPException(status_code=404, detail="Income not found")
+    db.delete(income)
+    db.commit()
+    db.close()
+    return {"message": f"Income {income_id} deleted!"}
+
 # --- Income ---
 @app.post("/income")
 def add_income(income: IncomeInput, user_id: int = Depends(get_current_user)):
     db = SessionLocal()
     date = income.date or datetime.today().strftime("%Y-%m-%d")
-    new_income = Income(user_id=user_id, amount=income.amount, source=income.source, description=income.description, date=date)
+    new_income = Income(user_id=user_id, amount=income.amount, source=income.source, description=income.description, date=date, recurring=income.recurring)
     db.add(new_income)
     db.commit()
     db.refresh(new_income)
     db.close()
-    return {"message": "Income added!", "income": {"id": new_income.id, "amount": new_income.amount, "source": new_income.source, "description": new_income.description, "date": new_income.date}}
+    return {"message": "Income added!", "income": {"id": new_income.id, "amount": new_income.amount, "source": new_income.source, "description": new_income.description, "date": new_income.date, "recurring": new_income.recurring}}
 
 @app.get("/income")
 def get_income(month: Optional[str] = Query(None), user_id: int = Depends(get_current_user)):
