@@ -5,7 +5,7 @@ import requests
 from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
@@ -79,6 +79,12 @@ class SavingsGoal(Base):
     name    = Column(String, nullable=False)
     target  = Column(Float, nullable=False)
     month   = Column(String, nullable=False)
+
+class BankToken(Base):
+    __tablename__ = "bank_tokens"
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(Integer, nullable=False, unique=True)
+    access_token = Column(String, nullable=False)
 
 Base.metadata.create_all(bind=engine)
 
@@ -435,51 +441,92 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
 # --- Bank Connection ---
 @app.get("/bank/connect")
 def bank_connect(user_id: int = Depends(get_current_user)):
+    # Encode user identity in state so callback can identify the user without a JWT
+    state = jwt.encode({"user_id": user_id, "exp": datetime.utcnow() + timedelta(minutes=15)}, SECRET_KEY, algorithm=ALGORITHM)
     params = {
         "response_type": "code",
         "client_id": TRUELAYER_CLIENT_ID,
         "scope": "info accounts balance transactions",
         "redirect_uri": TRUELAYER_REDIRECT_URI,
         "providers": "uk-ob-all uk-oauth-all",
+        "state": state,
     }
     url = "https://auth.truelayer-sandbox.com/?" + urlencode(params)
     return {"connect_url": url}
 
 @app.get("/bank/callback")
-def bank_callback(code: str, user_id: int = Depends(get_current_user)):
+def bank_callback(code: str = None, state: str = None, error: str = None):
+    if error or not code or not state:
+        return RedirectResponse(url="/?bank_error=1")
+    try:
+        payload = jwt.decode(state, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+    except JWTError:
+        return RedirectResponse(url="/?bank_error=1")
     res = requests.post("https://auth.truelayer-sandbox.com/connect/token", data={
         "grant_type": "authorization_code",
         "client_id": TRUELAYER_CLIENT_ID,
         "client_secret": TRUELAYER_CLIENT_SECRET,
         "redirect_uri": TRUELAYER_REDIRECT_URI,
-        "code": code
+        "code": code,
     })
     tokens = res.json()
     access_token = tokens.get("access_token")
     if not access_token:
-        raise HTTPException(status_code=400, detail="Failed to get access token")
-    return {"message": "Bank connected!", "access_token": access_token}
+        return RedirectResponse(url="/?bank_error=1")
+    db = SessionLocal()
+    existing = db.query(BankToken).filter(BankToken.user_id == user_id).first()
+    if existing:
+        existing.access_token = access_token
+    else:
+        db.add(BankToken(user_id=user_id, access_token=access_token))
+    db.commit()
+    db.close()
+    return RedirectResponse(url="/?bank_connected=1")
 
-@app.get("/bank/transactions")
-def get_bank_transactions(access_token: str, user_id: int = Depends(get_current_user)):
-    headers = {"Authorization": f"Bearer {access_token}"}
+@app.get("/bank/status")
+def bank_status(user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    token = db.query(BankToken).filter(BankToken.user_id == user_id).first()
+    db.close()
+    return {"connected": token is not None}
+
+@app.post("/bank/import")
+def import_bank_transactions(user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    bank_token = db.query(BankToken).filter(BankToken.user_id == user_id).first()
+    if not bank_token:
+        db.close()
+        raise HTTPException(status_code=400, detail="No bank connected. Please connect your bank first.")
+    headers = {"Authorization": f"Bearer {bank_token.access_token}"}
     accounts_res = requests.get("https://api.truelayer-sandbox.com/data/v1/accounts", headers=headers)
     accounts = accounts_res.json().get("results", [])
     if not accounts:
+        db.close()
         raise HTTPException(status_code=400, detail="No accounts found")
-    account_id = accounts[0]["account_id"]
-    trans_res = requests.get(f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions", headers=headers)
-    transactions = trans_res.json().get("results", [])
-    db = SessionLocal()
     imported = 0
-    for t in transactions:
-        if t.get("amount", 0) < 0:
-            new_expense = Expense(user_id=user_id, amount=abs(t["amount"]), category="bank import", description=t.get("description", "Bank transaction"), date=t.get("timestamp", "")[:10], recurring=False)
-            db.add(new_expense)
-            imported += 1
+    for account in accounts:
+        account_id = account["account_id"]
+        trans_res = requests.get(f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions", headers=headers)
+        transactions = trans_res.json().get("results", [])
+        for t in transactions:
+            if t.get("amount", 0) < 0:
+                date = t.get("timestamp", "")[:10]
+                amount = round(abs(t["amount"]), 2)
+                desc = t.get("description", "Bank transaction")
+                # Skip exact duplicates
+                exists = db.query(Expense).filter(
+                    Expense.user_id == user_id,
+                    Expense.amount == amount,
+                    Expense.date == date,
+                    Expense.description == desc,
+                ).first()
+                if not exists:
+                    db.add(Expense(user_id=user_id, amount=amount, category="other", description=desc, date=date, recurring=False))
+                    imported += 1
     db.commit()
     db.close()
-    return {"message": f"Imported {imported} transactions!", "total": imported}
+    return {"message": f"Imported {imported} new transactions!", "total": imported}
 
 # --- AI Insights ---
 @app.get("/insights/{month}")
