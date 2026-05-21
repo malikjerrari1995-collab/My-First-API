@@ -31,6 +31,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./finance.db")
 # Railway gives postgres:// but SQLAlchemy requires postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# If the URL didn't resolve (e.g. Railway template literal), fall back to SQLite
+if not (DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("sqlite:///")):
+    DATABASE_URL = "sqlite:///./finance.db"
 if DATABASE_URL.startswith("postgresql://"):
     engine = create_engine(DATABASE_URL)
 else:
