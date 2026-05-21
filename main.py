@@ -513,12 +513,22 @@ def _load_rows(content: bytes, filename: str):
     if not all_rows:
         raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, make sure it's a digital statement downloaded from the app — not a scanned image.")
 
-    # Find the header row: first row that contains a cell with 'date' in it
+    # Find the header row: a row with 'date' AND an amount/balance keyword
+    # (avoids matching metadata rows like "Date of creation: ...")
+    amount_hints = {'amount', 'value', 'debit', 'credit', 'balance', 'paid', 'withdrawal', 'deposit'}
     header_idx = 0
+    fallback_idx = None
     for i, row in enumerate(all_rows):
-        if any('date' in str(c).lower() for c in row):
-            header_idx = i
-            break
+        row_lower = ' '.join(str(c).lower() for c in row)
+        if 'date' in row_lower:
+            if any(h in row_lower for h in amount_hints):
+                header_idx = i
+                break
+            elif fallback_idx is None:
+                fallback_idx = i
+    else:
+        if fallback_idx is not None:
+            header_idx = fallback_idx
 
     headers = all_rows[header_idx]
     dict_rows = []
