@@ -207,11 +207,11 @@
         <div class="bank-card">
           <div class="bank-status">
             <span style="font-size:13px;font-weight:500;">🏦 Import Bank Statement</span>
-            <span style="font-size:12px;color:var(--text2);margin-left:10px;">Monzo, Barclays, HSBC, Starling, Nationwide &amp; more</span>
+            <span style="font-size:12px;color:var(--text2);margin-left:10px;">CSV or Excel — Monzo, Barclays, HSBC, Starling &amp; more</span>
           </div>
           <div class="bank-actions">
-            <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;">Upload CSV</label>
-            <input type="file" id="csv-file-input" accept=".csv,text/csv,text/plain,application/csv" style="display:none;" onchange="importCSV(this)">
+            <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;">Upload Statement</label>
+            <input type="file" id="csv-file-input" accept=".csv,.xlsx,.xls,text/csv,text/plain" style="display:none;" onchange="importCSV(this)">
           </div>
         </div>
         <div id="bank-msg" style="font-size:12px;color:var(--text2);margin-top:8px;display:none;"></div>

@@ -432,18 +432,15 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
     output.seek(0)
     return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"})
 
-# --- CSV Import ---
+# --- Bank Statement Import (CSV + Excel) ---
 def _detect_csv_columns(headers):
     hl = [h.lower().strip() for h in headers]
-
     date_col = next((headers[i] for i, h in enumerate(hl) if 'date' in h), None)
-
     desc_col = None
     for kw in ['description', 'memo', 'narrative', 'details', 'counter party', 'counterparty', 'payee', 'merchant', 'reference', 'transaction', 'name']:
         desc_col = next((headers[i] for i, h in enumerate(hl) if kw in h), None)
         if desc_col:
             break
-
     amount_col = next((headers[i] for i, h in enumerate(hl) if h == 'amount' or h.startswith('amount')), None)
     debit_col = credit_col = None
     if not amount_col:
@@ -454,11 +451,10 @@ def _detect_csv_columns(headers):
                 credit_col = headers[i]
         if not debit_col and not credit_col:
             amount_col = next((headers[i] for i, h in enumerate(hl) if 'amount' in h), None)
-
     return date_col, desc_col, amount_col, debit_col, credit_col
 
 def _parse_date(s):
-    for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d/%m/%y', '%Y/%m/%d', '%m/%d/%Y']:
+    for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%d %b %Y', '%d/%m/%y', '%Y/%m/%d']:
         try:
             return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
         except (ValueError, AttributeError):
@@ -476,39 +472,61 @@ def _parse_amount(s):
     except ValueError:
         return None
 
+def _load_rows(content: bytes, filename: str):
+    """Return (headers, list_of_dicts) scanning past any metadata rows."""
+    fname = (filename or '').lower()
+    all_rows = []
+
+    if fname.endswith('.xlsx') or fname.endswith('.xls'):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        for row in ws.iter_rows(values_only=True):
+            all_rows.append([str(v) if v is not None else '' for v in row])
+        wb.close()
+    else:
+        try:
+            text = content.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            text = content.decode('latin-1')
+        for row in csv.reader(io.StringIO(text)):
+            all_rows.append([str(v) for v in row])
+
+    # Find the header row: first row that contains a cell with 'date' in it
+    header_idx = 0
+    for i, row in enumerate(all_rows):
+        if any('date' in str(c).lower() for c in row):
+            header_idx = i
+            break
+
+    headers = all_rows[header_idx]
+    dict_rows = []
+    for row in all_rows[header_idx + 1:]:
+        if not any(v.strip() for v in row):
+            continue  # skip blank rows
+        dict_rows.append(dict(zip(headers, row)))
+
+    return headers, dict_rows
+
 @app.post("/bank/import/csv")
 async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
     content = await file.read()
     try:
-        text = content.decode('utf-8-sig')
-    except UnicodeDecodeError:
-        try:
-            text = content.decode('latin-1')
-        except Exception:
-            raise HTTPException(status_code=400, detail="Could not read file — please export as CSV (UTF-8)")
-
-    try:
-        reader = csv.DictReader(io.StringIO(text))
-        fieldnames = reader.fieldnames
+        headers, rows = _load_rows(content, file.filename or '')
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
 
-    if not fieldnames:
-        raise HTTPException(status_code=400, detail="CSV has no headers — make sure you export as CSV not Excel")
+    if not headers:
+        raise HTTPException(status_code=400, detail="No headers found in file")
 
-    date_col, desc_col, amount_col, debit_col, credit_col = _detect_csv_columns(list(fieldnames))
+    date_col, desc_col, amount_col, debit_col, credit_col = _detect_csv_columns(headers)
     if not date_col:
-        raise HTTPException(status_code=400, detail=f"No date column found. Headers seen: {', '.join(fieldnames)}")
+        raise HTTPException(status_code=400, detail=f"No date column found. Columns: {', '.join(h for h in headers if h)}")
     if not amount_col and not debit_col and not credit_col:
-        raise HTTPException(status_code=400, detail=f"No amount column found. Headers seen: {', '.join(fieldnames)}")
+        raise HTTPException(status_code=400, detail=f"No amount column found. Columns: {', '.join(h for h in headers if h)}")
 
     db = SessionLocal()
     imported_expenses = imported_income = skipped = 0
-
-    try:
-        rows = list(reader)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error reading CSV rows: {e}")
 
     for row in rows:
         date = _parse_date(row.get(date_col, ''))
