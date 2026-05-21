@@ -433,29 +433,53 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
     output.seek(0)
     return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"})
 
-# --- Bank Statement Import (CSV + Excel) ---
+# --- Bank Statement Import (CSV + Excel + PDF) ---
+# Supported: UK (NatWest, Barclays, HSBC, Lloyds, Metro, Monzo, Starling, Santander, Halifax, TSB)
+#            EU  (Volksbank, Sparkasse, Deutsche Bank, Commerzbank, ING DE/NL, BNP, CA, SG, BBVA, Santander ES)
+
+_DATE_TERMS   = {'date','datum','buchungstag','valutadatum','buchungsdatum','wertstellung',
+                 'wertstellungsdatum','fecha','data','transactiedatum','boekingsdatum'}
+_AMOUNT_TERMS = {'amount','value','betrag','umsatz','betrag eur','summe','importe','importo',
+                 'bedrag','montant','saldo','balance','soll/haben','umsatz eur'}
+_DEBIT_TERMS  = {'debit','paid out','withdrawal','ausgabe','soll','belastung','lastschrift',
+                 'af','debe','uscita','débit','debet'}
+_CREDIT_TERMS = {'credit','paid in','deposit','einnahme','haben','gutschrift','bij','haber',
+                 'entrata','crédit','credit'}
+_DESC_TERMS   = ['description','memo','narrative','details','verwendungszweck','buchungstext',
+                 'auftraggeber','beguenstigter','zahlungsempfaenger','empfaenger','omschrijving',
+                 'naam','libelle','concepto','causale','counter party','counterparty','payee',
+                 'merchant','reference','transaction','name']
+
 def _detect_csv_columns(headers):
     hl = [h.lower().strip() for h in headers]
-    date_col = next((headers[i] for i, h in enumerate(hl) if 'date' in h), None)
+
+    date_col = next((headers[i] for i, h in enumerate(hl)
+                     if any(t in h for t in _DATE_TERMS)), None)
+
     desc_col = None
-    for kw in ['description', 'memo', 'narrative', 'details', 'counter party', 'counterparty', 'payee', 'merchant', 'reference', 'transaction', 'name']:
+    for kw in _DESC_TERMS:
         desc_col = next((headers[i] for i, h in enumerate(hl) if kw in h), None)
         if desc_col:
             break
-    amount_col = next((headers[i] for i, h in enumerate(hl) if h in ('amount', 'value') or h.startswith('amount')), None)
+
+    # Single amount column
+    amount_col = next((headers[i] for i, h in enumerate(hl)
+                       if any(h == t or h.startswith(t) for t in _AMOUNT_TERMS)), None)
     debit_col = credit_col = None
     if not amount_col:
         for i, h in enumerate(hl):
-            if 'debit' in h or 'paid out' in h or 'withdrawal' in h:
+            if any(t in h for t in _DEBIT_TERMS):
                 debit_col = headers[i]
-            elif 'credit' in h or 'paid in' in h or 'deposit' in h:
+            elif any(t in h for t in _CREDIT_TERMS):
                 credit_col = headers[i]
         if not debit_col and not credit_col:
-            amount_col = next((headers[i] for i, h in enumerate(hl) if 'amount' in h or 'value' in h), None)
+            amount_col = next((headers[i] for i, h in enumerate(hl)
+                               if any(t in h for t in _AMOUNT_TERMS)), None)
     return date_col, desc_col, amount_col, debit_col, credit_col
 
 def _parse_date(s):
-    for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%d %b %Y', '%d/%m/%y', '%Y/%m/%d']:
+    for fmt in ['%Y-%m-%d','%d/%m/%Y','%m/%d/%Y','%d-%m-%Y','%d.%m.%Y',
+                '%d %b %Y','%d/%m/%y','%d.%m.%y','%Y/%m/%d']:
         try:
             return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
         except (ValueError, AttributeError):
@@ -465,16 +489,28 @@ def _parse_date(s):
 def _parse_amount(s):
     if not s:
         return None
-    cleaned = str(s).strip().replace('£', '').replace('$', '').replace(',', '').replace(' ', '')
-    if not cleaned or cleaned == '-':
+    cleaned = str(s).strip().replace('£','').replace('$','').replace('€','').replace(' ','')
+    if not cleaned or cleaned in ('-', 'n/a', 'n.a.', '–'):
         return None
+    # European decimal: ends with comma + 1-2 digits (e.g. "1.234,56")
+    if re.search(r',\d{1,2}$', cleaned):
+        cleaned = cleaned.replace('.', '').replace(',', '.')
+    else:
+        cleaned = cleaned.replace(',', '')
     try:
         return float(cleaned)
     except ValueError:
         return None
 
+def _decode_text(content: bytes) -> str:
+    for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+        try:
+            return content.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return content.decode('latin-1', errors='replace')
+
 def _load_rows(content: bytes, filename: str):
-    """Return (headers, list_of_dicts) scanning past any metadata rows."""
     fname = (filename or '').lower()
     all_rows = []
 
@@ -485,6 +521,7 @@ def _load_rows(content: bytes, filename: str):
         for row in ws.iter_rows(values_only=True):
             all_rows.append([str(v) if v is not None else '' for v in row])
         wb.close()
+
     elif fname.endswith('.pdf'):
         import pdfplumber
         with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -494,7 +531,6 @@ def _load_rows(content: bytes, filename: str):
                     for row in table:
                         all_rows.append([str(v) if v is not None else '' for v in row])
             if not all_rows:
-                # Fallback: extract raw text and split columns by 2+ spaces
                 for page in pdf.pages:
                     text = page.extract_text()
                     if text:
@@ -502,30 +538,33 @@ def _load_rows(content: bytes, filename: str):
                             cols = [c.strip() for c in re.split(r'\s{2,}', line) if c.strip()]
                             if cols:
                                 all_rows.append(cols)
+
     else:
-        try:
-            text = content.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            text = content.decode('latin-1')
-        for row in csv.reader(io.StringIO(text)):
+        text = _decode_text(content)
+        # Auto-detect delimiter: semicolon (EU), tab, or comma
+        sample = text[:4000]
+        delim = max([(',', sample.count(',')), (';', sample.count(';')), ('\t', sample.count('\t'))],
+                    key=lambda x: x[1])[0]
+        for row in csv.reader(io.StringIO(text), delimiter=delim):
             all_rows.append([str(v) for v in row])
 
     if not all_rows:
-        raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, make sure it's a digital statement downloaded from the app — not a scanned image.")
+        raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, ensure it's a digital statement — not a scanned image.")
 
-    # Find the header row: a row with 'date' AND an amount/balance keyword
-    # (avoids matching metadata rows like "Date of creation: ...")
-    amount_hints = {'amount', 'value', 'debit', 'credit', 'balance', 'paid', 'withdrawal', 'deposit'}
+    # Find the header row: prefer a row that has BOTH a date term AND an amount/balance term
+    date_hints   = _DATE_TERMS | {'date','datum'}
+    amount_hints = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | {'balance','saldo','saldo'}
     header_idx = 0
     fallback_idx = None
     for i, row in enumerate(all_rows):
-        row_lower = ' '.join(str(c).lower() for c in row)
-        if 'date' in row_lower:
-            if any(h in row_lower for h in amount_hints):
-                header_idx = i
-                break
-            elif fallback_idx is None:
-                fallback_idx = i
+        rl = ' '.join(str(c).lower() for c in row)
+        has_date   = any(t in rl for t in date_hints)
+        has_amount = any(t in rl for t in amount_hints)
+        if has_date and has_amount:
+            header_idx = i
+            break
+        if has_date and fallback_idx is None:
+            fallback_idx = i
     else:
         if fallback_idx is not None:
             header_idx = fallback_idx
@@ -533,8 +572,8 @@ def _load_rows(content: bytes, filename: str):
     headers = all_rows[header_idx]
     dict_rows = []
     for row in all_rows[header_idx + 1:]:
-        if not any(v.strip() for v in row):
-            continue  # skip blank rows
+        if not any(str(v).strip() for v in row):
+            continue
         dict_rows.append(dict(zip(headers, row)))
 
     return headers, dict_rows
