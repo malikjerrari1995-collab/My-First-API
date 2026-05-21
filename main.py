@@ -449,6 +449,7 @@ def bank_connect(user_id: int = Depends(get_current_user)):
         "scope": "info accounts balance transactions",
         "redirect_uri": TRUELAYER_REDIRECT_URI,
         "providers": "uk-ob-all uk-oauth-all",
+        "enable_mock": "true",
         "state": state,
     }
     url = "https://auth.truelayer-sandbox.com/?" + urlencode(params)
