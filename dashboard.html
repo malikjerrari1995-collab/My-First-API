@@ -206,10 +206,13 @@
       <div class="card" style="padding:14px 22px;">
         <div class="bank-card">
           <div class="bank-status">
-            <div class="bank-dot" id="bank-dot"></div>
-            <span class="bank-label" id="bank-label">Checking bank connection...</span>
+            <span style="font-size:13px;font-weight:500;">🏦 Import Bank Statement</span>
+            <span style="font-size:12px;color:var(--text2);margin-left:10px;">Monzo, Barclays, HSBC, Starling, Nationwide &amp; more</span>
           </div>
-          <div class="bank-actions" id="bank-actions"></div>
+          <div class="bank-actions">
+            <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;">Upload CSV</label>
+            <input type="file" id="csv-file-input" accept=".csv" style="display:none;" onchange="importCSV(this)">
+          </div>
         </div>
         <div id="bank-msg" style="font-size:12px;color:var(--text2);margin-top:8px;display:none;"></div>
       </div>
@@ -442,16 +445,12 @@ function showApp() {
   document.getElementById('month-picker').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
   var savedTheme = localStorage.getItem('fin_theme');
   if (savedTheme === 'light') { document.body.classList.add('light'); document.getElementById('theme-btn').textContent = '🌙 Dark'; document.getElementById('mobile-theme-btn').textContent = '🌙'; }
-  var params = new URLSearchParams(window.location.search);
-  if (params.get('bank_connected') === '1') { showToast('Bank connected! Click Import Transactions to load your data.'); history.replaceState({}, '', '/'); }
-  if (params.get('bank_error') === '1') { showToast('Bank connection failed. Please try again.'); history.replaceState({}, '', '/'); }
   loadAll();
 }
 
 function loadAll() {
   var month = getMonth();
   if (!month) return;
-  loadBankStatus();
   loadSummary(month);
   loadBudgets(month);
   loadSavings(month);
@@ -461,46 +460,28 @@ function loadAll() {
   loadIncomeHistory(month);
 }
 
-async function loadBankStatus() {
-  try {
-    var res = await fetch(API + '/bank/status', { headers: hdrs() });
-    var data = await res.json();
-    var dot = document.getElementById('bank-dot');
-    var label = document.getElementById('bank-label');
-    var actions = document.getElementById('bank-actions');
-    if (data.connected) {
-      dot.classList.add('connected');
-      label.textContent = 'Bank connected';
-      actions.innerHTML = '<button class="btn btn-primary" onclick="importBank()">Import Transactions</button>';
-    } else {
-      dot.classList.remove('connected');
-      label.textContent = 'No bank connected';
-      actions.innerHTML = '<button class="btn btn-ghost" onclick="connectBank()">Connect Bank</button>';
-    }
-  } catch(e) {}
-}
-
-async function connectBank() {
-  try {
-    var res = await fetch(API + '/bank/connect', { headers: hdrs() });
-    var data = await res.json();
-    if (data.connect_url) { window.location.href = data.connect_url; }
-  } catch(e) { showToast('Could not start bank connection'); }
-}
-
-async function importBank() {
+async function importCSV(input) {
+  var file = input.files[0];
+  if (!file) return;
   var msg = document.getElementById('bank-msg');
-  msg.style.display = 'none';
+  msg.style.display = 'block';
+  msg.textContent = 'Importing...';
+  var formData = new FormData();
+  formData.append('file', file);
   try {
-    var res = await fetch(API + '/bank/import', { method: 'POST', headers: hdrs() });
+    var res = await fetch(API + '/bank/import/csv', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: formData
+    });
     var data = await res.json();
-    if (!res.ok) { showToast(data.detail || 'Import failed'); return; }
-    msg.style.display = 'block';
+    if (!res.ok) { msg.textContent = data.detail || 'Import failed'; showToast('Import failed'); input.value = ''; return; }
     msg.textContent = data.message;
-    showToast('Bank import complete!');
+    showToast('✅ ' + data.message);
     var month = getMonth();
-    loadSummary(month); loadExpenses(month); loadInsights(month);
-  } catch(e) { showToast('Import failed'); }
+    loadSummary(month); loadExpenses(month); loadInsights(month); loadIncomeHistory(month);
+  } catch(e) { msg.textContent = 'Import failed'; showToast('Import failed'); }
+  input.value = '';
 }
 
 async function loadSummary(month) {

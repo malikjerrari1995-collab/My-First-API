@@ -1,12 +1,9 @@
 import resend
 import csv
 import io
-import secrets
-import requests
-from urllib.parse import urlencode
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
@@ -23,10 +20,6 @@ NOTIFICATION_EMAIL = "malikjerrari1995@gmail.com"
 SECRET_KEY = "your-super-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-TRUELAYER_CLIENT_ID = "sandbox-financetracker-322ee6"
-TRUELAYER_CLIENT_SECRET = "64b4b0aa-5688-4220-bbe0-4e7841030aa8"
-TRUELAYER_REDIRECT_URI = "https://my-first-api-production-0383.up.railway.app/bank/callback"
-
 resend.api_key = RESEND_API_KEY
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -162,9 +155,6 @@ def send_alert_email(subject: str, message: str):
         })
     except Exception as e:
         print(f"Email failed: {e}")
-
-# --- In-memory state store for TrueLayer OAuth (state_token -> (user_id, expiry)) ---
-_oauth_states: dict = {}
 
 # --- App ---
 app = FastAPI(title="Expense Tracker API", version="2.0.0")
@@ -442,98 +432,129 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
     output.seek(0)
     return StreamingResponse(io.BytesIO(output.getvalue().encode()), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=finance_{month}.csv"})
 
-# --- Bank Connection ---
-@app.get("/bank/connect")
-def bank_connect(user_id: int = Depends(get_current_user)):
-    state = secrets.token_urlsafe(32)
-    _oauth_states[state] = (user_id, datetime.utcnow() + timedelta(minutes=15))
-    params = {
-        "response_type": "code",
-        "client_id": TRUELAYER_CLIENT_ID,
-        "scope": "info accounts balance transactions",
-        "redirect_uri": TRUELAYER_REDIRECT_URI,
-        "providers": "uk-ob-all uk-oauth-all",
-        "enable_mock": "true",
-        "state": state,
-    }
-    url = "https://auth.truelayer-sandbox.com/?" + urlencode(params)
-    return {"connect_url": url}
+# --- CSV Import ---
+def _detect_csv_columns(headers):
+    hl = [h.lower().strip() for h in headers]
 
-@app.get("/bank/callback")
-def bank_callback(code: str = None, state: str = None, error: str = None):
-    if error or not code or not state:
-        return RedirectResponse(url="/?bank_error=1")
-    now = datetime.utcnow()
-    for k in [k for k, v in _oauth_states.items() if v[1] < now]:
-        del _oauth_states[k]
-    entry = _oauth_states.pop(state, None)
-    if not entry or datetime.utcnow() > entry[1]:
-        return RedirectResponse(url="/?bank_error=1")
-    user_id = entry[0]
-    res = requests.post("https://auth.truelayer-sandbox.com/connect/token", data={
-        "grant_type": "authorization_code",
-        "client_id": TRUELAYER_CLIENT_ID,
-        "client_secret": TRUELAYER_CLIENT_SECRET,
-        "redirect_uri": TRUELAYER_REDIRECT_URI,
-        "code": code,
-    })
-    tokens = res.json()
-    access_token = tokens.get("access_token")
-    if not access_token:
-        return RedirectResponse(url="/?bank_error=1")
+    date_col = next((headers[i] for i, h in enumerate(hl) if 'date' in h), None)
+
+    desc_col = None
+    for kw in ['description', 'memo', 'narrative', 'details', 'counter party', 'counterparty', 'payee', 'merchant', 'reference', 'transaction', 'name']:
+        desc_col = next((headers[i] for i, h in enumerate(hl) if kw in h), None)
+        if desc_col:
+            break
+
+    amount_col = next((headers[i] for i, h in enumerate(hl) if h == 'amount' or h.startswith('amount')), None)
+    debit_col = credit_col = None
+    if not amount_col:
+        for i, h in enumerate(hl):
+            if 'debit' in h or 'paid out' in h or 'withdrawal' in h:
+                debit_col = headers[i]
+            elif 'credit' in h or 'paid in' in h or 'deposit' in h:
+                credit_col = headers[i]
+        if not debit_col and not credit_col:
+            amount_col = next((headers[i] for i, h in enumerate(hl) if 'amount' in h), None)
+
+    return date_col, desc_col, amount_col, debit_col, credit_col
+
+def _parse_date(s):
+    for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d/%m/%y', '%Y/%m/%d', '%m/%d/%Y']:
+        try:
+            return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
+        except (ValueError, AttributeError):
+            continue
+    return None
+
+def _parse_amount(s):
+    if not s:
+        return None
+    cleaned = str(s).strip().replace('£', '').replace('$', '').replace(',', '').replace(' ', '')
+    if not cleaned or cleaned == '-':
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+@app.post("/bank/import/csv")
+async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
+    content = await file.read()
+    try:
+        text = content.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        text = content.decode('latin-1')
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="Could not read CSV headers")
+
+    date_col, desc_col, amount_col, debit_col, credit_col = _detect_csv_columns(list(reader.fieldnames))
+    if not date_col:
+        raise HTTPException(status_code=400, detail="Could not find a date column. Expected a column containing 'date'.")
+    if not amount_col and not debit_col and not credit_col:
+        raise HTTPException(status_code=400, detail="Could not find an amount column. Expected 'amount', 'debit', 'credit', 'paid out', or 'paid in'.")
+
     db = SessionLocal()
-    existing = db.query(BankToken).filter(BankToken.user_id == user_id).first()
-    if existing:
-        existing.access_token = access_token
-    else:
-        db.add(BankToken(user_id=user_id, access_token=access_token))
+    imported_expenses = imported_income = skipped = 0
+
+    for row in reader:
+        date = _parse_date(row.get(date_col, ''))
+        if not date:
+            skipped += 1
+            continue
+
+        desc = row.get(desc_col, '').strip() if desc_col else 'Bank transaction'
+        desc = desc or 'Bank transaction'
+
+        if amount_col:
+            amount = _parse_amount(row.get(amount_col))
+            if amount is None:
+                skipped += 1
+                continue
+            is_expense = amount < 0
+            abs_amount = round(abs(amount), 2)
+        else:
+            debit = _parse_amount(row.get(debit_col, '')) if debit_col else None
+            credit = _parse_amount(row.get(credit_col, '')) if credit_col else None
+            if debit and debit > 0:
+                is_expense, abs_amount = True, round(debit, 2)
+            elif credit and credit > 0:
+                is_expense, abs_amount = False, round(credit, 2)
+            else:
+                skipped += 1
+                continue
+
+        if abs_amount == 0:
+            skipped += 1
+            continue
+
+        if is_expense:
+            exists = db.query(Expense).filter(
+                Expense.user_id == user_id, Expense.amount == abs_amount,
+                Expense.date == date, Expense.description == desc
+            ).first()
+            if not exists:
+                db.add(Expense(user_id=user_id, amount=abs_amount, category='other', description=desc, date=date, recurring=False))
+                imported_expenses += 1
+        else:
+            exists = db.query(Income).filter(
+                Income.user_id == user_id, Income.amount == abs_amount,
+                Income.date == date, Income.description == desc
+            ).first()
+            if not exists:
+                db.add(Income(user_id=user_id, amount=abs_amount, source='Bank Import', description=desc, date=date, recurring=False))
+                imported_income += 1
+
     db.commit()
     db.close()
-    return RedirectResponse(url="/?bank_connected=1")
 
-@app.get("/bank/status")
-def bank_status(user_id: int = Depends(get_current_user)):
-    db = SessionLocal()
-    token = db.query(BankToken).filter(BankToken.user_id == user_id).first()
-    db.close()
-    return {"connected": token is not None}
-
-@app.post("/bank/import")
-def import_bank_transactions(user_id: int = Depends(get_current_user)):
-    db = SessionLocal()
-    bank_token = db.query(BankToken).filter(BankToken.user_id == user_id).first()
-    if not bank_token:
-        db.close()
-        raise HTTPException(status_code=400, detail="No bank connected. Please connect your bank first.")
-    headers = {"Authorization": f"Bearer {bank_token.access_token}"}
-    accounts_res = requests.get("https://api.truelayer-sandbox.com/data/v1/accounts", headers=headers)
-    accounts = accounts_res.json().get("results", [])
-    if not accounts:
-        db.close()
-        raise HTTPException(status_code=400, detail="No accounts found")
-    imported = 0
-    for account in accounts:
-        account_id = account["account_id"]
-        trans_res = requests.get(f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions", headers=headers)
-        transactions = trans_res.json().get("results", [])
-        for t in transactions:
-            if t.get("amount", 0) < 0:
-                date = t.get("timestamp", "")[:10]
-                amount = round(abs(t["amount"]), 2)
-                desc = t.get("description", "Bank transaction")
-                # Skip exact duplicates
-                exists = db.query(Expense).filter(
-                    Expense.user_id == user_id,
-                    Expense.amount == amount,
-                    Expense.date == date,
-                    Expense.description == desc,
-                ).first()
-                if not exists:
-                    db.add(Expense(user_id=user_id, amount=amount, category="other", description=desc, date=date, recurring=False))
-                    imported += 1
-    db.commit()
-    db.close()
-    return {"message": f"Imported {imported} new transactions!", "total": imported}
+    parts = []
+    if imported_expenses:
+        parts.append(f"{imported_expenses} expense{'s' if imported_expenses != 1 else ''}")
+    if imported_income:
+        parts.append(f"{imported_income} income entr{'ies' if imported_income != 1 else 'y'}")
+    message = f"Imported {' and '.join(parts)}!" if parts else "No new transactions found (all already imported or skipped)"
+    return {"message": message, "imported_expenses": imported_expenses, "imported_income": imported_income, "skipped": skipped}
 
 # --- AI Insights ---
 @app.get("/insights/{month}")
