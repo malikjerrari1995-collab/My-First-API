@@ -1,3 +1,4 @@
+import re
 import resend
 import csv
 import io
@@ -492,6 +493,15 @@ def _load_rows(content: bytes, filename: str):
                 if table:
                     for row in table:
                         all_rows.append([str(v) if v is not None else '' for v in row])
+            if not all_rows:
+                # Fallback: extract raw text and split columns by 2+ spaces
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        for line in text.split('\n'):
+                            cols = [c.strip() for c in re.split(r'\s{2,}', line) if c.strip()]
+                            if cols:
+                                all_rows.append(cols)
     else:
         try:
             text = content.decode('utf-8-sig')
@@ -499,6 +509,9 @@ def _load_rows(content: bytes, filename: str):
             text = content.decode('latin-1')
         for row in csv.reader(io.StringIO(text)):
             all_rows.append([str(v) for v in row])
+
+    if not all_rows:
+        raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, make sure it's a digital statement downloaded from the app — not a scanned image.")
 
     # Find the header row: first row that contains a cell with 'date' in it
     header_idx = 0
