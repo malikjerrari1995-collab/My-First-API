@@ -298,6 +298,15 @@ def delete_income(income_id: int, user_id: int = Depends(get_current_user)):
     db.close()
     return {"message": f"Income {income_id} deleted!"}
 
+@app.delete("/clear/{month}")
+def clear_month(month: str, user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    exp_count = db.query(Expense).filter(Expense.user_id == user_id, Expense.date.startswith(month)).delete()
+    inc_count = db.query(Income).filter(Income.user_id == user_id, Income.date.startswith(month)).delete()
+    db.commit()
+    db.close()
+    return {"message": f"Cleared {exp_count} expense{'s' if exp_count != 1 else ''} and {inc_count} income entr{'ies' if inc_count != 1 else 'y'} for {month}"}
+
 # --- Income ---
 @app.post("/income")
 def add_income(income: IncomeInput, user_id: int = Depends(get_current_user)):
