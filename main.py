@@ -182,7 +182,8 @@ def serve_dashboard():
 # --- Health ---
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "Expense Tracker API v2 is running!"}
+    db_type = "postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite"
+    return {"status": "ok", "message": "Expense Tracker API v2 is running!", "database": db_type}
 
 # --- Auth ---
 @app.post("/register")
