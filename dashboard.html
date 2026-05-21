@@ -211,7 +211,7 @@
           </div>
           <div class="bank-actions">
             <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;">Upload CSV</label>
-            <input type="file" id="csv-file-input" accept=".csv" style="display:none;" onchange="importCSV(this)">
+            <input type="file" id="csv-file-input" accept=".csv,text/csv,text/plain,application/csv" style="display:none;" onchange="importCSV(this)">
           </div>
         </div>
         <div id="bank-msg" style="font-size:12px;color:var(--text2);margin-top:8px;display:none;"></div>
@@ -465,7 +465,7 @@ async function importCSV(input) {
   if (!file) return;
   var msg = document.getElementById('bank-msg');
   msg.style.display = 'block';
-  msg.textContent = 'Importing...';
+  msg.textContent = 'Importing ' + file.name + '...';
   var formData = new FormData();
   formData.append('file', file);
   try {
@@ -475,12 +475,21 @@ async function importCSV(input) {
       body: formData
     });
     var data = await res.json();
-    if (!res.ok) { msg.textContent = data.detail || 'Import failed'; showToast('Import failed'); input.value = ''; return; }
+    if (!res.ok) {
+      var err = data.detail || ('Server error ' + res.status);
+      msg.textContent = err;
+      showToast(err);
+      input.value = '';
+      return;
+    }
     msg.textContent = data.message;
     showToast('✅ ' + data.message);
     var month = getMonth();
     loadSummary(month); loadExpenses(month); loadInsights(month); loadIncomeHistory(month);
-  } catch(e) { msg.textContent = 'Import failed'; showToast('Import failed'); }
+  } catch(e) {
+    msg.textContent = 'Network error: ' + e.message;
+    showToast('Network error — check your connection');
+  }
   input.value = '';
 }
 

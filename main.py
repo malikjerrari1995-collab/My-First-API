@@ -482,22 +482,35 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
     try:
         text = content.decode('utf-8-sig')
     except UnicodeDecodeError:
-        text = content.decode('latin-1')
+        try:
+            text = content.decode('latin-1')
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not read file — please export as CSV (UTF-8)")
 
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        raise HTTPException(status_code=400, detail="Could not read CSV headers")
+    try:
+        reader = csv.DictReader(io.StringIO(text))
+        fieldnames = reader.fieldnames
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
 
-    date_col, desc_col, amount_col, debit_col, credit_col = _detect_csv_columns(list(reader.fieldnames))
+    if not fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no headers — make sure you export as CSV not Excel")
+
+    date_col, desc_col, amount_col, debit_col, credit_col = _detect_csv_columns(list(fieldnames))
     if not date_col:
-        raise HTTPException(status_code=400, detail="Could not find a date column. Expected a column containing 'date'.")
+        raise HTTPException(status_code=400, detail=f"No date column found. Headers seen: {', '.join(fieldnames)}")
     if not amount_col and not debit_col and not credit_col:
-        raise HTTPException(status_code=400, detail="Could not find an amount column. Expected 'amount', 'debit', 'credit', 'paid out', or 'paid in'.")
+        raise HTTPException(status_code=400, detail=f"No amount column found. Headers seen: {', '.join(fieldnames)}")
 
     db = SessionLocal()
     imported_expenses = imported_income = skipped = 0
 
-    for row in reader:
+    try:
+        rows = list(reader)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CSV rows: {e}")
+
+    for row in rows:
         date = _parse_date(row.get(date_col, ''))
         if not date:
             skipped += 1
