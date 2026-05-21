@@ -1,6 +1,7 @@
 import resend
 import csv
 import io
+import secrets
 import requests
 from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Query, Depends
@@ -161,6 +162,9 @@ def send_alert_email(subject: str, message: str):
         })
     except Exception as e:
         print(f"Email failed: {e}")
+
+# --- In-memory state store for TrueLayer OAuth (state_token -> (user_id, expiry)) ---
+_oauth_states: dict = {}
 
 # --- App ---
 app = FastAPI(title="Expense Tracker API", version="2.0.0")
@@ -441,8 +445,8 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
 # --- Bank Connection ---
 @app.get("/bank/connect")
 def bank_connect(user_id: int = Depends(get_current_user)):
-    # Encode user identity in state so callback can identify the user without a JWT
-    state = jwt.encode({"user_id": user_id, "exp": datetime.utcnow() + timedelta(minutes=15)}, SECRET_KEY, algorithm=ALGORITHM)
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = (user_id, datetime.utcnow() + timedelta(minutes=15))
     params = {
         "response_type": "code",
         "client_id": TRUELAYER_CLIENT_ID,
@@ -459,11 +463,13 @@ def bank_connect(user_id: int = Depends(get_current_user)):
 def bank_callback(code: str = None, state: str = None, error: str = None):
     if error or not code or not state:
         return RedirectResponse(url="/?bank_error=1")
-    try:
-        payload = jwt.decode(state, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("user_id")
-    except JWTError:
+    now = datetime.utcnow()
+    for k in [k for k, v in _oauth_states.items() if v[1] < now]:
+        del _oauth_states[k]
+    entry = _oauth_states.pop(state, None)
+    if not entry or datetime.utcnow() > entry[1]:
         return RedirectResponse(url="/?bank_error=1")
+    user_id = entry[0]
     res = requests.post("https://auth.truelayer-sandbox.com/connect/token", data={
         "grant_type": "authorization_code",
         "client_id": TRUELAYER_CLIENT_ID,
