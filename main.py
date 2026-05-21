@@ -489,10 +489,16 @@ def _parse_date(s):
 def _parse_amount(s):
     if not s:
         return None
-    cleaned = str(s).strip().replace('£','').replace('$','').replace('€','').replace(' ','')
-    if not cleaned or cleaned in ('-', 'n/a', 'n.a.', '–'):
+    cleaned = str(s).strip()
+    # Strip currency symbols and whitespace
+    cleaned = cleaned.replace('£','').replace('$','').replace('€','').replace(' ','').replace('\xa0','')
+    # Normalise minus signs (Unicode minus U+2212, en-dash, em-dash → ASCII -)
+    cleaned = cleaned.replace('−','-').replace('–','-').replace('—','-')
+    # Strip leading + (some banks prefix credits with +)
+    cleaned = cleaned.lstrip('+')
+    if not cleaned or cleaned in ('-','n/a','n.a.'):
         return None
-    # European decimal: ends with comma + 1-2 digits (e.g. "1.234,56")
+    # European decimal: ends with comma + 1-2 digits (e.g. "1.234,56" or "-24,50")
     if re.search(r',\d{1,2}$', cleaned):
         cleaned = cleaned.replace('.', '').replace(',', '.')
     else:
@@ -654,7 +660,14 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
         parts.append(f"{imported_expenses} expense{'s' if imported_expenses != 1 else ''}")
     if imported_income:
         parts.append(f"{imported_income} income entr{'ies' if imported_income != 1 else 'y'}")
-    message = f"Imported {' and '.join(parts)}!" if parts else "No new transactions found (all already imported or skipped)"
+
+    if parts:
+        message = f"Imported {' and '.join(parts)}! ({skipped} rows skipped)"
+    elif skipped > 0:
+        message = f"Nothing imported — {skipped} rows could not be parsed. Check the month picker matches your statement period."
+    else:
+        message = "No transactions found in file."
+
     return {"message": message, "imported_expenses": imported_expenses, "imported_income": imported_income, "skipped": skipped}
 
 # --- AI Insights ---
