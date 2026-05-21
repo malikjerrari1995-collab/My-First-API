@@ -198,8 +198,6 @@
       <span class="user-name" id="user-name"></span>
       <input type="month" id="month-picker" class="month-inp">
       <button class="btn btn-primary" onclick="loadAll()">Load</button>
-      <button class="btn btn-ghost" onclick="exportCSV()">Export CSV</button>
-      <button class="btn btn-danger" onclick="clearMonth()">Clear Month</button>
       <button class="btn btn-ghost" onclick="toggleTheme()" id="theme-btn">☀️ Light</button>
       <button class="btn btn-ghost" onclick="logout()">Logout</button>
     </div>
@@ -208,19 +206,24 @@
   <main>
     <div id="alerts-banner"></div>
 
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+      <button class="btn btn-ghost" onclick="exportCSV()">📥 Export CSV</button>
+      <button class="btn btn-danger" onclick="clearMonth()">🗑️ Clear Month</button>
+    </div>
+
     <div class="row one-col" style="margin-bottom:18px;">
-      <div class="card" style="padding:14px 22px;">
-        <div class="bank-card">
-          <div class="bank-status">
-            <span style="font-size:13px;font-weight:500;">🏦 Import Bank Statement</span>
-            <span style="font-size:12px;color:var(--text2);margin-left:10px;">PDF, CSV or Excel — works with any UK bank</span>
+      <div class="card" style="padding:16px 22px; border-color:var(--accent); border-width:2px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:14px;font-weight:600;margin-bottom:3px;">🏦 Import Bank Statement</div>
+            <div style="font-size:12px;color:var(--text2);">Upload a PDF, CSV or Excel file from your bank — Monzo, NatWest, Barclays, HSBC &amp; more</div>
           </div>
-          <div class="bank-actions">
-            <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;">Upload Statement</label>
+          <div style="flex-shrink:0;">
+            <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;white-space:nowrap;">📂 Upload Statement</label>
             <input type="file" id="csv-file-input" style="display:none;" onchange="importCSV(this)">
           </div>
         </div>
-        <div id="bank-msg" style="font-size:12px;color:var(--text2);margin-top:8px;display:none;"></div>
+        <div id="bank-msg" style="font-size:12px;color:var(--text2);margin-top:10px;display:none;"></div>
       </div>
     </div>
 
