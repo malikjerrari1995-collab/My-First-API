@@ -441,7 +441,7 @@ def _detect_csv_columns(headers):
         desc_col = next((headers[i] for i, h in enumerate(hl) if kw in h), None)
         if desc_col:
             break
-    amount_col = next((headers[i] for i, h in enumerate(hl) if h == 'amount' or h.startswith('amount')), None)
+    amount_col = next((headers[i] for i, h in enumerate(hl) if h in ('amount', 'value') or h.startswith('amount')), None)
     debit_col = credit_col = None
     if not amount_col:
         for i, h in enumerate(hl):
@@ -450,7 +450,7 @@ def _detect_csv_columns(headers):
             elif 'credit' in h or 'paid in' in h or 'deposit' in h:
                 credit_col = headers[i]
         if not debit_col and not credit_col:
-            amount_col = next((headers[i] for i, h in enumerate(hl) if 'amount' in h), None)
+            amount_col = next((headers[i] for i, h in enumerate(hl) if 'amount' in h or 'value' in h), None)
     return date_col, desc_col, amount_col, debit_col, credit_col
 
 def _parse_date(s):
@@ -484,6 +484,14 @@ def _load_rows(content: bytes, filename: str):
         for row in ws.iter_rows(values_only=True):
             all_rows.append([str(v) if v is not None else '' for v in row])
         wb.close()
+    elif fname.endswith('.pdf'):
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            for page in pdf.pages:
+                table = page.extract_table()
+                if table:
+                    for row in table:
+                        all_rows.append([str(v) if v is not None else '' for v in row])
     else:
         try:
             text = content.decode('utf-8-sig')
