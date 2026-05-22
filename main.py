@@ -617,9 +617,14 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
 
     date_col, desc_col, amount_col, debit_col, credit_col = _detect_csv_columns(headers)
     if not date_col:
-        raise HTTPException(status_code=400, detail=f"No date column found. Columns: {', '.join(h for h in headers if h)}")
+        raise HTTPException(status_code=400, detail=f"No date column found. Columns detected: {', '.join(h for h in headers if h)}")
     if not amount_col and not debit_col and not credit_col:
-        raise HTTPException(status_code=400, detail=f"No amount column found. Columns: {', '.join(h for h in headers if h)}")
+        raise HTTPException(status_code=400, detail=f"No amount column found. Columns detected: {', '.join(h for h in headers if h)}")
+
+    # Sample first row for diagnostics
+    sample = rows[0] if rows else {}
+    sample_date = sample.get(date_col, '') if date_col else ''
+    sample_amount = sample.get(amount_col or debit_col or credit_col or '', '') if sample else ''
 
     db = SessionLocal()
     imported_expenses = imported_income = skipped = 0
@@ -684,7 +689,11 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
     if parts:
         message = f"Imported {' and '.join(parts)}! ({skipped} rows skipped)"
     elif skipped > 0:
-        message = f"Nothing imported — {skipped} rows could not be parsed. Check the month picker matches your statement period."
+        parsed_date = _parse_date(sample_date)
+        parsed_amt  = _parse_amount(sample_amount)
+        detail = f"Date column: '{date_col}', sample value: '{sample_date}' → {'OK: ' + parsed_date if parsed_date else 'FAILED to parse'}. "
+        detail += f"Amount column: '{amount_col or debit_col or credit_col}', sample value: '{sample_amount}' → {'OK: ' + str(parsed_amt) if parsed_amt is not None else 'FAILED to parse'}."
+        message = f"Nothing imported — {skipped} rows skipped. {detail}"
     else:
         message = "No transactions found in file."
 
