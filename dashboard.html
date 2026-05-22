@@ -349,7 +349,7 @@
 <script>
 const API = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
   ? 'http://127.0.0.1:8000'
-  : 'https://my-first-api-production-0383.up.railway.app';
+  : window.location.origin;
 
 const ICONS = { food:'🍔', transport:'🚗', entertainment:'🎬', fitness:'💪', rent:'🏠', shopping:'🛍️', utilities:'💡', other:'📦' };
 const ICOLORS = { success:'var(--success)', warning:'var(--warning)', danger:'var(--danger)', info:'var(--accent)' };
@@ -432,7 +432,9 @@ async function login() {
     localStorage.setItem('fin_user', userName);
     showApp();
   } catch(e) {
-    document.getElementById('login-error').style.display = 'block';
+    var el = document.getElementById('login-error');
+    el.textContent = 'Could not connect to server. Check your connection and try again.';
+    el.style.display = 'block';
   }
 }
 
@@ -461,7 +463,9 @@ async function register() {
     localStorage.setItem('fin_user', userName);
     showApp();
   } catch(e) {
-    document.getElementById('reg-error').style.display = 'block';
+    var el = document.getElementById('reg-error');
+    el.textContent = 'Could not connect to server. Check your connection and try again.';
+    el.style.display = 'block';
   }
 }
 
