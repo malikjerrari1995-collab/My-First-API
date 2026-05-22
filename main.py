@@ -460,7 +460,10 @@ def export_expenses(month: str, user_id: int = Depends(get_current_user)):
 _DATE_TERMS   = {'date','datum','buchungstag','valutadatum','buchungsdatum','wertstellung',
                  'wertstellungsdatum','fecha','data','transactiedatum','boekingsdatum'}
 _AMOUNT_TERMS = {'amount','value','betrag','umsatz','betrag eur','summe','importe','importo',
-                 'bedrag','montant','saldo','balance','soll/haben','umsatz eur'}
+                 'bedrag','montant','soll/haben','umsatz eur'}
+# Balance/saldo are kept for header-row detection only — not for column matching,
+# since a running balance can't tell us income vs expense.
+_BALANCE_TERMS = {'balance','saldo','kontostand'}
 _DEBIT_TERMS  = {'debit','paid out','withdrawal','ausgabe','soll','belastung','lastschrift',
                  'af','debe','uscita','débit','debet'}
 _CREDIT_TERMS = {'credit','paid in','deposit','einnahme','haben','gutschrift','bij','haber',
@@ -482,24 +485,30 @@ def _detect_csv_columns(headers):
         if desc_col:
             break
 
-    # Single amount column
-    amount_col = next((headers[i] for i, h in enumerate(hl)
-                       if any(h == t or h.startswith(t) for t in _AMOUNT_TERMS)), None)
-    debit_col = credit_col = None
-    if not amount_col:
-        for i, h in enumerate(hl):
-            if any(t in h for t in _DEBIT_TERMS):
-                debit_col = headers[i]
-            elif any(t in h for t in _CREDIT_TERMS):
-                credit_col = headers[i]
-        if not debit_col and not credit_col:
+    # Prefer explicit debit/credit split (e.g. NatWest "Paid out"/"Paid in") over a single column.
+    # Scan all headers first so we don't stop at the first debit match and miss credit.
+    amount_col = debit_col = credit_col = None
+    for i, h in enumerate(hl):
+        if debit_col is None and any(t in h for t in _DEBIT_TERMS):
+            debit_col = headers[i]
+        if credit_col is None and any(t in h for t in _CREDIT_TERMS):
+            credit_col = headers[i]
+
+    # Only look for a single amount column when there is no debit/credit split
+    if not debit_col and not credit_col:
+        amount_col = next((headers[i] for i, h in enumerate(hl)
+                           if any(h == t or h.startswith(t) for t in _AMOUNT_TERMS)), None)
+        if not amount_col:
             amount_col = next((headers[i] for i, h in enumerate(hl)
                                if any(t in h for t in _AMOUNT_TERMS)), None)
+
     return date_col, desc_col, amount_col, debit_col, credit_col
 
 def _parse_date(s):
     for fmt in ['%Y-%m-%d','%d/%m/%Y','%m/%d/%Y','%d-%m-%Y','%d.%m.%Y',
-                '%d %b %Y','%d/%m/%y','%d.%m.%y','%Y/%m/%d']:
+                '%d %b %Y','%d %B %Y',   # abbreviated (May) and full (March) month names
+                '%d/%m/%y','%d.%m.%y','%d %b %y','%d %B %y',
+                '%Y/%m/%d']:
         try:
             return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
         except (ValueError, AttributeError):
@@ -514,6 +523,16 @@ def _parse_amount(s):
     cleaned = cleaned.replace('£','').replace('$','').replace('€','').replace(' ','').replace('\xa0','')
     # Normalise minus signs (Unicode minus U+2212, en-dash, em-dash → ASCII -)
     cleaned = cleaned.replace('−','-').replace('–','-').replace('—','-')
+    # Handle DR/CR suffix (NatWest: "850.00DR" = debit/negative, "850.00CR" = credit/positive)
+    force_negative = False
+    upper = cleaned.upper()
+    if upper.endswith('DR'):
+        cleaned, force_negative = cleaned[:-2], True
+    elif upper.endswith('CR'):
+        cleaned = cleaned[:-2]
+    # Handle parentheses notation for debits: (850.00) → -850.00
+    if cleaned.startswith('(') and cleaned.endswith(')'):
+        cleaned = '-' + cleaned[1:-1]
     # Strip leading + (some banks prefix credits with +)
     cleaned = cleaned.lstrip('+')
     if not cleaned or cleaned in ('-','n/a','n.a.'):
@@ -524,7 +543,10 @@ def _parse_amount(s):
     else:
         cleaned = cleaned.replace(',', '')
     try:
-        return float(cleaned)
+        result = float(cleaned)
+        if force_negative:
+            result = -abs(result)
+        return result
     except ValueError:
         return None
 
@@ -579,7 +601,7 @@ def _load_rows(content: bytes, filename: str):
 
     # Find the header row: prefer a row that has BOTH a date term AND an amount/balance term
     date_hints   = _DATE_TERMS | {'date','datum'}
-    amount_hints = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | {'balance','saldo','saldo'}
+    amount_hints = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
     header_idx = 0
     fallback_idx = None
     for i, row in enumerate(all_rows):
@@ -691,9 +713,14 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
     elif skipped > 0:
         parsed_date = _parse_date(sample_date)
         parsed_amt  = _parse_amount(sample_amount)
-        detail = f"Date column: '{date_col}', sample value: '{sample_date}' → {'OK: ' + parsed_date if parsed_date else 'FAILED to parse'}. "
-        detail += f"Amount column: '{amount_col or debit_col or credit_col}', sample value: '{sample_amount}' → {'OK: ' + str(parsed_amt) if parsed_amt is not None else 'FAILED to parse'}."
-        message = f"Nothing imported — {skipped} rows skipped. {detail}"
+        col_summary = f"date='{date_col}' amount='{amount_col}' debit='{debit_col}' credit='{credit_col}'"
+        date_diag   = f"'{sample_date}' → {'OK' if parsed_date else 'FAILED'}"
+        amt_diag    = f"'{sample_amount}' → {'OK' if parsed_amt is not None else 'FAILED'}"
+        header_diag = f"Headers: {[h for h in headers if h][:8]}"
+        message = (f"Nothing imported — {skipped} rows skipped. "
+                   f"Columns detected: {col_summary}. "
+                   f"First row date {date_diag}, amount {amt_diag}. "
+                   f"{header_diag}")
     else:
         message = "No transactions found in file."
 
