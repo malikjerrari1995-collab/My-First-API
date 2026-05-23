@@ -550,8 +550,9 @@ function logout() {
   localStorage.removeItem('fin_token');
   localStorage.removeItem('fin_user');
   token = null; userName = null;
-  document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('app-screen').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+  showTab('login');
 }
 
 function showApp() {
