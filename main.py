@@ -196,7 +196,7 @@ app.add_middleware(
 # --- Serve dashboard ---
 @app.get("/")
 def serve_dashboard():
-    return FileResponse("dashboard.html")
+    return FileResponse("dashboard.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 # --- Health ---
 @app.get("/health")
