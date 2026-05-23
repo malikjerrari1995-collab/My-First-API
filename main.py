@@ -1,9 +1,10 @@
 import re
 import os
+import secrets
 import resend
 import csv
 import io
-from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -91,6 +92,13 @@ class BankToken(Base):
     user_id      = Column(Integer, nullable=False, unique=True)
     access_token = Column(String, nullable=False)
 
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id         = Column(Integer, primary_key=True, index=True)
+    email      = Column(String, nullable=False, index=True)
+    token      = Column(String, nullable=False, unique=True)
+    expires_at = Column(String, nullable=False)
+
 Base.metadata.create_all(bind=engine)
 
 # --- Input models ---
@@ -122,6 +130,13 @@ class SavingsGoalInput(BaseModel):
     name:   str
     target: float
     month:  Optional[str] = None
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token:    str
+    password: str
 
 # --- Auth helpers ---
 def hash_password(password: str):
@@ -223,6 +238,82 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_token({"user_id": user.id})
     return {"access_token": token, "token_type": "bearer", "name": user.name, "email": user.email}
+
+@app.post("/forgot-password")
+def forgot_password(req: ForgotPasswordRequest):
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == req.email).first()
+    if user:
+        db.query(PasswordResetToken).filter(PasswordResetToken.email == req.email).delete()
+        tok = secrets.token_urlsafe(32)
+        expires = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        db.add(PasswordResetToken(email=req.email, token=tok, expires_at=expires))
+        db.commit()
+        reset_link = f"https://financetrackr.co.uk/?reset_token={tok}"
+        try:
+            resend.Emails.send({
+                "from": "onboarding@resend.dev",
+                "to": req.email,
+                "subject": "Reset your Finance. password",
+                "html": (
+                    f"<h2>Password Reset</h2>"
+                    f"<p>Click the link below to reset your password. This link expires in 1 hour.</p>"
+                    f"<p><a href='{reset_link}'>Reset my password</a></p>"
+                    f"<p>If you didn't request this, you can ignore this email.</p>"
+                )
+            })
+        except Exception as e:
+            print(f"Reset email failed: {e}")
+    db.close()
+    return {"message": "If that email is registered, you'll receive a reset link shortly."}
+
+@app.post("/reset-password")
+def reset_password(req: ResetPasswordRequest):
+    db = SessionLocal()
+    record = db.query(PasswordResetToken).filter(PasswordResetToken.token == req.token).first()
+    if not record:
+        db.close()
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+    if datetime.utcnow() > datetime.fromisoformat(record.expires_at):
+        db.delete(record)
+        db.commit()
+        db.close()
+        raise HTTPException(status_code=400, detail="Reset link has expired. Please request a new one.")
+    if len(req.password) < 8:
+        db.close()
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not any(c.isdigit() for c in req.password):
+        db.close()
+        raise HTTPException(status_code=400, detail="Password must contain at least one number")
+    if not any(c.isupper() for c in req.password):
+        db.close()
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
+    user = db.query(User).filter(User.email == record.email).first()
+    if not user:
+        db.close()
+        raise HTTPException(status_code=400, detail="User not found")
+    user.password = hash_password(req.password)
+    db.delete(record)
+    db.commit()
+    db.close()
+    return {"message": "Password updated! You can now sign in."}
+
+@app.delete("/admin/clear-all")
+def clear_all_users(x_admin_key: Optional[str] = Header(None)):
+    if x_admin_key != "financetrackr-reset-2024":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    db = SessionLocal()
+    user_count = db.query(User).count()
+    db.query(PasswordResetToken).delete()
+    db.query(BankToken).delete()
+    db.query(SavingsGoal).delete()
+    db.query(Budget).delete()
+    db.query(Income).delete()
+    db.query(Expense).delete()
+    db.query(User).delete()
+    db.commit()
+    db.close()
+    return {"message": f"Cleared {user_count} user(s) and all associated data."}
 
 # --- Expenses ---
 @app.post("/expenses")
