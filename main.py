@@ -325,6 +325,27 @@ def clear_all_users(x_admin_key: Optional[str] = Header(None)):
     db.close()
     return {"message": f"Cleared {user_count} user(s) and all associated data."}
 
+@app.delete("/admin/user")
+def delete_user_by_email(email: str = Query(...), x_admin_key: Optional[str] = Header(None)):
+    if x_admin_key != "financetrackr-reset-2024":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == email.strip().lower()).first()
+    if not user:
+        db.close()
+        raise HTTPException(status_code=404, detail=f"No user found with email: {email}")
+    uid = user.id
+    db.query(PasswordResetToken).filter(PasswordResetToken.email == user.email).delete()
+    db.query(BankToken).filter(BankToken.user_id == uid).delete()
+    db.query(SavingsGoal).filter(SavingsGoal.user_id == uid).delete()
+    db.query(Budget).filter(Budget.user_id == uid).delete()
+    db.query(Income).filter(Income.user_id == uid).delete()
+    db.query(Expense).filter(Expense.user_id == uid).delete()
+    db.delete(user)
+    db.commit()
+    db.close()
+    return {"message": f"Deleted {email.strip().lower()} and all associated data."}
+
 # --- Expenses ---
 @app.post("/expenses")
 def add_expense(expense: ExpenseInput, user_id: int = Depends(get_current_user)):
@@ -655,10 +676,56 @@ def _parse_amount(s):
 def _decode_text(content: bytes) -> str:
     for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
         try:
-            return content.decode(enc)
+            text = content.decode(enc)
+            return text.replace('\r\n', '\n').replace('\r', '\n')
         except UnicodeDecodeError:
             continue
-    return content.decode('latin-1', errors='replace')
+    return content.decode('latin-1', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
+
+def _parse_fixed_width(text: str):
+    """Parse fixed-width / space-aligned text files (e.g. Nationwide exports)."""
+    date_hints = _DATE_TERMS | {'date', 'datum'}
+    amt_hints  = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
+
+    lines = text.splitlines()
+    header_line_idx = None
+    for i, line in enumerate(lines):
+        parts = [p.strip() for p in re.split(r'\s{2,}', line.strip()) if p.strip()]
+        if len(parts) < 2:
+            continue
+        rl = line.lower()
+        if any(t in rl for t in date_hints) and any(t in rl for t in amt_hints):
+            header_line_idx = i
+            break
+
+    if header_line_idx is None:
+        return None
+
+    header_line = lines[header_line_idx]
+    col_names = [p.strip() for p in re.split(r'\s{2,}', header_line.strip()) if p.strip()]
+
+    # Record the start character offset of each column using the header line
+    col_starts = []
+    search_from = 0
+    for name in col_names:
+        pos = header_line.find(name, search_from)
+        if pos == -1:
+            pos = search_from
+        col_starts.append(pos)
+        search_from = pos + len(name)
+
+    all_rows = [col_names]
+    for line in lines[header_line_idx + 1:]:
+        if not line.strip():
+            continue
+        row = []
+        for j, start in enumerate(col_starts):
+            end = col_starts[j + 1] if j + 1 < len(col_starts) else len(line)
+            val = line[start:end].strip() if start <= len(line) else ''
+            row.append(val)
+        all_rows.append(row)
+
+    return all_rows
 
 def _load_rows(content: bytes, filename: str):
     fname = (filename or '').lower()
@@ -711,12 +778,20 @@ def _load_rows(content: bytes, filename: str):
                         best_delim = d
             except Exception:
                 pass
-        if best_cols < 2:  # no header-like row found — fall back to occurrence count
-            best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
-                              ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
-        delim = best_delim
-        for row in csv.reader(io.StringIO(text), delimiter=delim):
-            all_rows.append([str(v) for v in row])
+        if best_cols < 2:
+            # Standard delimiters found nothing — try fixed-width (e.g. Nationwide)
+            fw_rows = _parse_fixed_width(text)
+            if fw_rows and len(fw_rows) > 1 and len(fw_rows[0]) >= 2:
+                all_rows = fw_rows
+            else:
+                # Last resort: pick delimiter by raw occurrence count
+                best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
+                                  ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
+                for row in csv.reader(io.StringIO(text), delimiter=best_delim):
+                    all_rows.append([str(v) for v in row])
+        else:
+            for row in csv.reader(io.StringIO(text), delimiter=best_delim):
+                all_rows.append([str(v) for v in row])
 
     if not all_rows:
         raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, ensure it's a digital statement — not a scanned image.")
@@ -747,6 +822,22 @@ def _load_rows(content: bytes, filename: str):
         dict_rows.append(dict(zip(headers, row)))
 
     return headers, dict_rows
+
+@app.post("/bank/debug-csv")
+async def debug_csv(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
+    """Return first 10 raw lines and parsed rows to help diagnose import failures."""
+    content = await file.read()
+    text = _decode_text(content)
+    raw_lines = text.splitlines()[:10]
+    try:
+        headers, rows = _load_rows(content, file.filename or '')
+    except Exception as e:
+        return {"raw_lines": [repr(l) for l in raw_lines], "error": str(e)}
+    return {
+        "raw_lines": [repr(l) for l in raw_lines],
+        "detected_headers": headers,
+        "first_3_rows": rows[:3],
+    }
 
 @app.post("/bank/import/csv")
 async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
