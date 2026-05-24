@@ -185,12 +185,21 @@ def send_alert_email(subject: str, message: str):
 # --- App ---
 app = FastAPI(title="Expense Tracker API", version="2.0.0")
 
+ALLOWED_ORIGINS = [
+    "https://financetrackr.co.uk",
+    "https://www.financetrackr.co.uk",
+    "https://api.financetrackr.co.uk",
+    "https://my-first-api-production-0383.up.railway.app",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
 
 # --- Serve dashboard ---
