@@ -565,8 +565,8 @@ _AMOUNT_TERMS = {'amount','value','betrag','umsatz','betrag eur','summe','import
 # Balance/saldo are kept for header-row detection only — not for column matching,
 # since a running balance can't tell us income vs expense.
 _BALANCE_TERMS = {'balance','saldo','kontostand'}
-_DEBIT_TERMS  = {'debit','paid out','withdrawal','ausgabe','soll','belastung','lastschrift',
-                 'af','debe','uscita','débit','debet'}
+_DEBIT_TERMS  = {'debit','paid out','withdrawal','withdrawn','ausgabe','soll','belastung',
+                 'lastschrift','af','debe','uscita','débit','debet'}
 _CREDIT_TERMS = {'credit','paid in','deposit','einnahme','haben','gutschrift','bij','haber',
                  'entrata','crédit','credit'}
 _DESC_TERMS   = ['description','memo','narrative','details','verwendungszweck','buchungstext',
@@ -690,10 +690,30 @@ def _load_rows(content: bytes, filename: str):
 
     else:
         text = _decode_text(content)
-        # Auto-detect delimiter: semicolon (EU), tab, or comma
+        # Smart delimiter detection: find the delimiter that yields the most
+        # columns in a row that looks like a header (contains date + amount terms).
+        # Raw occurrence counts can be fooled by metadata rows or thousand-separator
+        # commas in amounts, so we test each candidate on the actual parsed rows.
         sample = text[:4000]
-        delim = max([(',', sample.count(',')), (';', sample.count(';')), ('\t', sample.count('\t'))],
-                    key=lambda x: x[1])[0]
+        _date_hints_d  = _DATE_TERMS | {'date', 'datum'}
+        _amt_hints_d   = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
+        best_delim = ','
+        best_cols  = 0
+        for d in [',', ';', '\t', '|']:
+            try:
+                for row in csv.reader(io.StringIO(sample), delimiter=d):
+                    rl = ' '.join(str(c).lower() for c in row)
+                    if (any(t in rl for t in _date_hints_d) and
+                            any(t in rl for t in _amt_hints_d) and
+                            len(row) > best_cols):
+                        best_cols = len(row)
+                        best_delim = d
+            except Exception:
+                pass
+        if best_cols < 2:  # no header-like row found — fall back to occurrence count
+            best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
+                              ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
+        delim = best_delim
         for row in csv.reader(io.StringIO(text), delimiter=delim):
             all_rows.append([str(v) for v in row])
 
