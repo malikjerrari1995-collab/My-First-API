@@ -217,7 +217,8 @@ def health_check():
 @app.post("/register")
 def register(user: UserRegister):
     db = SessionLocal()
-    existing = db.query(User).filter(User.email == user.email).first()
+    email = user.email.strip().lower()
+    existing = db.query(User).filter(User.email == email).first()
     if existing:
         db.close()
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -230,7 +231,7 @@ def register(user: UserRegister):
     if not any(c.isupper() for c in user.password):
         db.close()
         raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
-    new_user = User(email=user.email, password=hash_password(user.password), name=user.name)
+    new_user = User(email=email, password=hash_password(user.password), name=user.name)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -241,7 +242,7 @@ def register(user: UserRegister):
 @app.post("/login")
 def login(form: OAuth2PasswordRequestForm = Depends()):
     db = SessionLocal()
-    user = db.query(User).filter(User.email == form.username).first()
+    user = db.query(User).filter(User.email == form.username.strip().lower()).first()
     db.close()
     if not user or not verify_password(form.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -251,7 +252,7 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
 @app.post("/forgot-password")
 def forgot_password(req: ForgotPasswordRequest):
     db = SessionLocal()
-    user = db.query(User).filter(User.email == req.email).first()
+    user = db.query(User).filter(User.email == req.email.strip().lower()).first()
     if user:
         db.query(PasswordResetToken).filter(PasswordResetToken.email == req.email).delete()
         tok = secrets.token_urlsafe(32)

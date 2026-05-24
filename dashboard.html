@@ -171,16 +171,16 @@
       <button type="button" class="auth-tab" onclick="showTab('register')">Create Account</button>
     </div>
     <div class="auth-form" id="login-form">
-      <input type="text" id="login-email" placeholder="Email address">
-      <input type="password" id="login-password" placeholder="Password">
+      <input type="email" id="login-email" placeholder="Email address" autocapitalize="none" autocorrect="off">
+      <input type="password" id="login-password" placeholder="Password" autocapitalize="none" autocorrect="off" autocomplete="current-password">
       <div class="auth-error" id="login-error">Invalid email or password</div>
       <button type="button" class="auth-btn" onclick="login()">Sign In</button>
       <button type="button" class="auth-link" onclick="showTab('forgot')">Forgot password?</button>
     </div>
     <div class="auth-form" id="register-form" style="display:none">
-      <input type="text" id="reg-name" placeholder="Your name">
-      <input type="text" id="reg-email" placeholder="Email address">
-      <input type="password" id="reg-password" placeholder="Password" oninput="checkPassword(this.value)">
+      <input type="text" id="reg-name" placeholder="Your name" autocorrect="off">
+      <input type="email" id="reg-email" placeholder="Email address" autocapitalize="none" autocorrect="off">
+      <input type="password" id="reg-password" placeholder="Password" autocapitalize="none" autocorrect="off" autocomplete="new-password" oninput="checkPassword(this.value)">
       <div class="pw-rules">
         <div class="pw-rule" id="rule-length">✗ At least 8 characters</div>
         <div class="pw-rule" id="rule-number">✗ At least one number</div>
@@ -191,7 +191,7 @@
     </div>
     <div class="auth-form" id="forgot-form" style="display:none">
       <p style="font-size:13px;color:var(--text2);margin:0">Enter your email and we'll send you a reset link.</p>
-      <input type="text" id="forgot-email" placeholder="Email address">
+      <input type="email" id="forgot-email" placeholder="Email address" autocapitalize="none" autocorrect="off">
       <div class="auth-error" id="forgot-error">Something went wrong</div>
       <div class="auth-success" id="forgot-success">Check your inbox for a reset link!</div>
       <button type="button" class="auth-btn" onclick="sendResetEmail()">Send Reset Link</button>
@@ -494,7 +494,7 @@ function toggleTheme() {
 }
 
 async function login() {
-  var email = document.getElementById('login-email').value;
+  var email = document.getElementById('login-email').value.trim().toLowerCase();
   var password = document.getElementById('login-password').value;
   if (!email || !password) return;
   try {
@@ -520,7 +520,7 @@ async function login() {
 
 async function register() {
   var name = document.getElementById('reg-name').value;
-  var email = document.getElementById('reg-email').value;
+  var email = document.getElementById('reg-email').value.trim().toLowerCase();
   var password = document.getElementById('reg-password').value;
   if (!email || !password) return;
   try {
