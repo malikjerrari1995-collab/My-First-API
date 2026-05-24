@@ -1,0 +1,12 @@
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/dashboard.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[redirects]]
+  from = "/*"
+  to = "/dashboard.html"
+  status = 200
