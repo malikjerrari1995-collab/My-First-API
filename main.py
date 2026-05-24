@@ -629,11 +629,18 @@ def _detect_csv_columns(headers):
 
 def _parse_date(s):
     for fmt in ['%Y-%m-%d','%d/%m/%Y','%m/%d/%Y','%d-%m-%Y','%d.%m.%Y',
-                '%d %b %Y','%d %B %Y',   # abbreviated (May) and full (March) month names
+                '%d %b %Y','%d %B %Y',
                 '%d/%m/%y','%d.%m.%y','%d %b %y','%d %B %y',
                 '%Y/%m/%d']:
         try:
             return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
+        except (ValueError, AttributeError):
+            continue
+    # Year-less formats like '22 May' — default to current year
+    current_year = datetime.today().year
+    for fmt in ['%d %b', '%d %B']:
+        try:
+            return datetime.strptime(f"{s.strip()} {current_year}", fmt + ' %Y').strftime('%Y-%m-%d')
         except (ValueError, AttributeError):
             continue
     return None
