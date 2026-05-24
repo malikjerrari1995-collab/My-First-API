@@ -629,19 +629,11 @@ def _detect_csv_columns(headers):
 
 def _parse_date(s):
     for fmt in ['%Y-%m-%d','%d/%m/%Y','%m/%d/%Y','%d-%m-%Y','%d.%m.%Y',
-                '%d %b %Y','%d %B %Y',
+                '%d %b %Y','%d %B %Y',   # abbreviated (May) and full (March) month names
                 '%d/%m/%y','%d.%m.%y','%d %b %y','%d %B %y',
                 '%Y/%m/%d']:
         try:
             return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
-        except (ValueError, AttributeError):
-            continue
-    # Handle day+month without year (e.g. NatWest "22 May") — assume current year
-    current_year = datetime.today().year
-    for fmt in ['%d %b', '%d %B']:
-        try:
-            dt = datetime.strptime(s.strip(), fmt)
-            return dt.replace(year=current_year).strftime('%Y-%m-%d')
         except (ValueError, AttributeError):
             continue
     return None
@@ -684,124 +676,10 @@ def _parse_amount(s):
 def _decode_text(content: bytes) -> str:
     for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
         try:
-            text = content.decode(enc)
-            return text.replace('\r\n', '\n').replace('\r', '\n')
+            return content.decode(enc)
         except UnicodeDecodeError:
             continue
-    return content.decode('latin-1', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
-
-# Ordered column-name patterns for fixed-width files whose headers are
-# single-space-separated (so 2+-space splitting can't find column boundaries).
-# Longer / more specific patterns come first to prevent partial matches.
-_FW_COL_PATTERNS = [
-    r'Paid\s+[Ii]n\s*\([^)]*\)',       # "Paid in (£)", "Paid In(£)"
-    r'Paid\s+[Oo]ut\s*\([^)]*\)',      # "Paid out (£)", "Paid Out(£)"
-    r'Withdrawn\s*\([^)]*\)',           # "Withdrawn(£)"
-    r'[Bb]alance\s*\([^)]*\)',          # "Balance(£)"
-    r'Paid\s+[Ii]n',                    # "Paid in"
-    r'Paid\s+[Oo]ut',                   # "Paid out"
-    r'[Ww]ithdrawn',
-    r'[Bb]alance',
-    r'[Dd]escription',
-    r'[Tt]ransaction\s+[Tt]ype',
-    r'[Tt]ype',
-    r'[Dd]ate',
-    r'[Aa]mount',
-    r'[Dd]ebit',
-    r'[Cc]redit',
-    r'[Dd]etails',
-    r'[Rr]eference',
-    r'[Mm]emo',
-]
-
-def _parse_fixed_width(text: str):
-    """Parse fixed-width / space-aligned text files (NatWest, Nationwide, etc.).
-
-    Handles two header styles:
-    - Multi-space-separated: 'Date   Description   Paid in (£)   Paid out (£)'
-    - Single-space-separated: 'Date Description Type Paid in (£) Paid out (£)'
-    """
-    date_hints = _DATE_TERMS | {'date', 'datum'}
-    amt_hints  = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
-
-    lines = text.splitlines()
-
-    # Pass 1: prefer lines with 2+ space gaps (unambiguous column separators)
-    header_line_idx = None
-    for i, line in enumerate(lines):
-        parts = [p.strip() for p in re.split(r'\s{2,}', line.strip()) if p.strip()]
-        if len(parts) < 2:
-            continue
-        rl = line.lower()
-        if any(t in rl for t in date_hints) and any(t in rl for t in amt_hints):
-            header_line_idx = i
-            break
-
-    # Pass 2: if no 2+-space header found, accept any header that contains
-    # at least 2 known bank-column patterns (avoids false-matching metadata rows)
-    if header_line_idx is None:
-        for i, line in enumerate(lines):
-            rl = line.lower()
-            if not (any(t in rl for t in date_hints) and any(t in rl for t in amt_hints)):
-                continue
-            matched = sum(1 for p in _FW_COL_PATTERNS if re.search(p, line, re.I))
-            if matched >= 2:
-                header_line_idx = i
-                break
-
-    if header_line_idx is None:
-        return None
-
-    header_line = lines[header_line_idx]
-
-    # Derive column names + start positions
-    col_names_2sp = [p.strip() for p in re.split(r'\s{2,}', header_line.strip()) if p.strip()]
-
-    if len(col_names_2sp) >= 2:
-        # Standard: use 2+-space-split names and their character offsets
-        col_names = col_names_2sp
-        col_starts = []
-        search_from = 0
-        for name in col_names:
-            pos = header_line.find(name, search_from)
-            if pos == -1:
-                pos = search_from
-            col_starts.append(pos)
-            search_from = pos + len(name)
-    else:
-        # Single-space header: locate each column by pattern match position
-        found = []
-        used_chars: set = set()
-        for pat in _FW_COL_PATTERNS:
-            m = re.search(pat, header_line, re.I)
-            if m and not (set(range(m.start(), m.end())) & used_chars):
-                found.append((m.start(), m.group().strip()))
-                used_chars.update(range(m.start(), m.end()))
-        if len(found) < 2:
-            return None
-        found.sort()
-        col_names  = [f[1] for f in found]
-        col_starts = [f[0] for f in found]
-
-    # Extract data rows by character-position slicing
-    _bare_prefix = re.compile(r'^[-+]?[£$€¥]$')  # sign+symbol only — leaked into adjacent col
-    all_rows = [col_names]
-    for line in lines[header_line_idx + 1:]:
-        if not line.strip():
-            continue
-        row = []
-        for j, start in enumerate(col_starts):
-            end = col_starts[j + 1] if j + 1 < len(col_starts) else len(line)
-            val = line[start:end].strip() if start <= len(line) else ''
-            row.append(val)
-        # Merge right-aligned amount that bled sign/symbol into the previous column
-        for j in range(len(row) - 1):
-            if _bare_prefix.match(row[j]) and row[j + 1] and row[j + 1][0].isdigit():
-                row[j + 1] = row[j] + row[j + 1]
-                row[j] = ''
-        all_rows.append(row)
-
-    return all_rows
+    return content.decode('latin-1', errors='replace')
 
 def _load_rows(content: bytes, filename: str):
     fname = (filename or '').lower()
@@ -854,20 +732,12 @@ def _load_rows(content: bytes, filename: str):
                         best_delim = d
             except Exception:
                 pass
-        if best_cols < 2:
-            # Standard delimiters found nothing — try fixed-width (e.g. Nationwide)
-            fw_rows = _parse_fixed_width(text)
-            if fw_rows and len(fw_rows) > 1 and len(fw_rows[0]) >= 2:
-                all_rows = fw_rows
-            else:
-                # Last resort: pick delimiter by raw occurrence count
-                best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
-                                  ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
-                for row in csv.reader(io.StringIO(text), delimiter=best_delim):
-                    all_rows.append([str(v) for v in row])
-        else:
-            for row in csv.reader(io.StringIO(text), delimiter=best_delim):
-                all_rows.append([str(v) for v in row])
+        if best_cols < 2:  # no header-like row found — fall back to occurrence count
+            best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
+                              ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
+        delim = best_delim
+        for row in csv.reader(io.StringIO(text), delimiter=delim):
+            all_rows.append([str(v) for v in row])
 
     if not all_rows:
         raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, ensure it's a digital statement — not a scanned image.")
@@ -959,12 +829,10 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
         else:
             debit = _parse_amount(row.get(debit_col, '')) if debit_col else None
             credit = _parse_amount(row.get(credit_col, '')) if credit_col else None
-            # Use abs() so both positive and negative values in the debit/credit
-            # columns are handled (e.g. NatWest puts -£100.00 in "Paid out (£)")
-            if debit is not None and debit != 0:
-                is_expense, abs_amount = True, round(abs(debit), 2)
-            elif credit is not None and credit != 0:
-                is_expense, abs_amount = False, round(abs(credit), 2)
+            if debit and debit > 0:
+                is_expense, abs_amount = True, round(debit, 2)
+            elif credit and credit > 0:
+                is_expense, abs_amount = False, round(credit, 2)
             else:
                 skipped += 1
                 continue
