@@ -681,6 +681,74 @@ def _decode_text(content: bytes) -> str:
             continue
     return content.decode('latin-1', errors='replace')
 
+def _parse_pdf_page_by_words(page):
+    """Parse a pdfplumber page using word bounding boxes to reconstruct columns.
+
+    Works for text-layout PDFs (e.g. Nationwide) where extract_table() finds nothing.
+    Multi-word column headers like 'Paid In(£)' are re-joined by detecting small
+    intra-word gaps (< 12pt) vs large inter-column gaps.
+    """
+    words = page.extract_words(x_tolerance=3, y_tolerance=3)
+    if not words:
+        return None
+
+    # Group words into lines by y-position (5pt quantisation)
+    lines_map = {}
+    for word in words:
+        y_key = round(word['top'] / 5) * 5
+        lines_map.setdefault(y_key, []).append(word)
+    sorted_lines = [sorted(lines_map[y], key=lambda w: w['x0']) for y in sorted(lines_map)]
+
+    # Find header line: must contain a date term AND an amount/debit/credit term
+    date_hints = _DATE_TERMS | {'date', 'datum'}
+    amt_hints  = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
+    header_line_idx = None
+    for i, line in enumerate(sorted_lines):
+        line_text = ' '.join(w['text'] for w in line).lower()
+        if any(t in line_text for t in date_hints) and any(t in line_text for t in amt_hints):
+            header_line_idx = i
+            break
+
+    if header_line_idx is None:
+        return None
+
+    # Cluster header words into column groups.
+    # Words with gap < 12pt belong to the same multi-word column name.
+    header_words = sorted_lines[header_line_idx]
+    columns = []          # list of (x0, col_name_str)
+    current_group = [header_words[0]]
+    for word in header_words[1:]:
+        gap = word['x0'] - current_group[-1]['x1']
+        if gap < 12:
+            current_group.append(word)
+        else:
+            columns.append((current_group[0]['x0'], ' '.join(w['text'] for w in current_group)))
+            current_group = [word]
+    columns.append((current_group[0]['x0'], ' '.join(w['text'] for w in current_group)))
+
+    if len(columns) < 2:
+        return None
+
+    col_names = [c[1] for c in columns]
+    col_x0s   = [c[0] for c in columns]
+
+    # Assign each data-row word to its column: rightmost col_x0 that is ≤ word's x0
+    all_rows = [col_names]
+    for line in sorted_lines[header_line_idx + 1:]:
+        if not line:
+            continue
+        row = [''] * len(col_names)
+        for word in line:
+            best_col = 0
+            for ci, cx0 in enumerate(col_x0s):
+                if cx0 <= word['x0']:
+                    best_col = ci
+            existing = row[best_col]
+            row[best_col] = (existing + ' ' + word['text']).strip() if existing else word['text']
+        all_rows.append(row)
+
+    return all_rows
+
 def _parse_nationwide(content: bytes):
     """Parse Nationwide space-aligned bank statement. Returns list-of-lists or None."""
     for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
@@ -747,18 +815,26 @@ def _load_rows(content: bytes, filename: str):
         import pdfplumber
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             for page in pdf.pages:
+                # Strategy 1: bordered table extraction (works for NatWest and others with gridlines)
                 table = page.extract_table()
                 if table:
                     for row in table:
-                        all_rows.append([str(v) if v is not None else '' for v in row])
-            if not all_rows:
-                for page in pdf.pages:
-                    text = page.extract_text()
-                    if text:
-                        for line in text.split('\n'):
-                            cols = [c.strip() for c in re.split(r'\s{2,}', line) if c.strip()]
-                            if cols:
-                                all_rows.append(cols)
+                        all_rows.append([str(v).strip() if v is not None else '' for v in row])
+                else:
+                    # Strategy 2: word-position-based column parsing (Nationwide text-layout PDFs)
+                    page_rows = _parse_pdf_page_by_words(page)
+                    if page_rows and len(page_rows) > 1 and len(page_rows[0]) >= 2:
+                        # Skip repeated header when appending subsequent pages
+                        start = 1 if all_rows else 0
+                        all_rows.extend(page_rows[start:])
+                    else:
+                        # Strategy 3: last-resort per-line text split
+                        text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                        if text:
+                            for line in text.splitlines():
+                                cols = [c.strip() for c in re.split(r'\s{2,}', line) if c.strip()]
+                                if cols:
+                                    all_rows.append(cols)
 
     else:
         # Nationwide detection: space-aligned format with 'Withdrawn' or 'BROUGHT FORWARD'

@@ -242,7 +242,7 @@
         </div>
         <div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
           <label class="btn btn-primary" for="csv-file-input" style="cursor:pointer;display:inline-block;white-space:nowrap;font-size:14px;padding:10px 20px;">📂 Upload Statement</label>
-          <input type="file" id="csv-file-input" style="display:none;" onchange="importCSV(this)">
+          <input type="file" id="csv-file-input" accept=".pdf,.csv,.xlsx,.xls" style="display:none;" onchange="importCSV(this)">
           <div style="font-size:11px;color:var(--text3);">PDF · CSV · Excel (.xlsx)</div>
         </div>
       </div>
