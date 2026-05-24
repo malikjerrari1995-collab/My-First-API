@@ -681,6 +681,56 @@ def _decode_text(content: bytes) -> str:
             continue
     return content.decode('latin-1', errors='replace')
 
+def _parse_nationwide(content: bytes):
+    """Parse Nationwide space-aligned bank statement. Returns list-of-lists or None."""
+    for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+        try:
+            text = content.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        text = content.decode('latin-1', errors='replace')
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    lines = text.splitlines()
+
+    header_line_idx = None
+    for i, line in enumerate(lines):
+        parts = [p.strip() for p in re.split(r'\s{2,}', line.strip()) if p.strip()]
+        if len(parts) < 2:
+            continue
+        ll = line.lower()
+        if 'date' in ll and ('withdrawn' in ll or 'paid in' in ll):
+            header_line_idx = i
+            break
+
+    if header_line_idx is None:
+        return None
+
+    header_line = lines[header_line_idx]
+    col_names = [p.strip() for p in re.split(r'\s{2,}', header_line.strip()) if p.strip()]
+    col_starts = []
+    search_from = 0
+    for name in col_names:
+        pos = header_line.find(name, search_from)
+        if pos == -1:
+            pos = search_from
+        col_starts.append(pos)
+        search_from = pos + len(name)
+
+    all_rows = [col_names]
+    for line in lines[header_line_idx + 1:]:
+        if not line.strip():
+            continue
+        row = []
+        for j, start in enumerate(col_starts):
+            end = col_starts[j + 1] if j + 1 < len(col_starts) else len(line)
+            val = line[start:end].strip() if start <= len(line) else ''
+            row.append(val)
+        all_rows.append(row)
+
+    return all_rows
+
 def _load_rows(content: bytes, filename: str):
     fname = (filename or '').lower()
     all_rows = []
@@ -711,33 +761,41 @@ def _load_rows(content: bytes, filename: str):
                                 all_rows.append(cols)
 
     else:
-        text = _decode_text(content)
-        # Smart delimiter detection: find the delimiter that yields the most
-        # columns in a row that looks like a header (contains date + amount terms).
-        # Raw occurrence counts can be fooled by metadata rows or thousand-separator
-        # commas in amounts, so we test each candidate on the actual parsed rows.
-        sample = text[:4000]
-        _date_hints_d  = _DATE_TERMS | {'date', 'datum'}
-        _amt_hints_d   = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
-        best_delim = ','
-        best_cols  = 0
-        for d in [',', ';', '\t', '|']:
-            try:
-                for row in csv.reader(io.StringIO(sample), delimiter=d):
-                    rl = ' '.join(str(c).lower() for c in row)
-                    if (any(t in rl for t in _date_hints_d) and
-                            any(t in rl for t in _amt_hints_d) and
-                            len(row) > best_cols):
-                        best_cols = len(row)
-                        best_delim = d
-            except Exception:
-                pass
-        if best_cols < 2:  # no header-like row found — fall back to occurrence count
-            best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
-                              ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
-        delim = best_delim
-        for row in csv.reader(io.StringIO(text), delimiter=delim):
-            all_rows.append([str(v) for v in row])
+        # Nationwide detection: space-aligned format with 'Withdrawn' or 'BROUGHT FORWARD'
+        lower_preview = content[:3000].decode('latin-1', errors='replace').lower()
+        if 'withdrawn' in lower_preview or 'brought forward' in lower_preview:
+            nw_rows = _parse_nationwide(content)
+            if nw_rows and len(nw_rows) > 1 and len(nw_rows[0]) >= 2:
+                all_rows = nw_rows
+
+        if not all_rows:
+            text = _decode_text(content)
+            # Smart delimiter detection: find the delimiter that yields the most
+            # columns in a row that looks like a header (contains date + amount terms).
+            # Raw occurrence counts can be fooled by metadata rows or thousand-separator
+            # commas in amounts, so we test each candidate on the actual parsed rows.
+            sample = text[:4000]
+            _date_hints_d  = _DATE_TERMS | {'date', 'datum'}
+            _amt_hints_d   = _AMOUNT_TERMS | _DEBIT_TERMS | _CREDIT_TERMS | _BALANCE_TERMS
+            best_delim = ','
+            best_cols  = 0
+            for d in [',', ';', '\t', '|']:
+                try:
+                    for row in csv.reader(io.StringIO(sample), delimiter=d):
+                        rl = ' '.join(str(c).lower() for c in row)
+                        if (any(t in rl for t in _date_hints_d) and
+                                any(t in rl for t in _amt_hints_d) and
+                                len(row) > best_cols):
+                            best_cols = len(row)
+                            best_delim = d
+                except Exception:
+                    pass
+            if best_cols < 2:  # no header-like row found — fall back to occurrence count
+                best_delim = max([(',', sample.count(',')), (';', sample.count(';')),
+                                  ('\t', sample.count('\t'))], key=lambda x: x[1])[0]
+            delim = best_delim
+            for row in csv.reader(io.StringIO(text), delimiter=delim):
+                all_rows.append([str(v) for v in row])
 
     if not all_rows:
         raise HTTPException(status_code=400, detail="No data could be extracted. For PDFs, ensure it's a digital statement — not a scanned image.")
