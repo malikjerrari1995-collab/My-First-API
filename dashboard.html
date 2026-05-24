@@ -159,7 +159,7 @@
 </head>
 <body>
 
-<div id="auth-screen">
+<div id="auth-screen" style="display:none">
   <div class="auth-box">
     <div class="auth-logo">finance<span>.</span></div>
     <div class="auth-sub">Your personal finance dashboard</div>
@@ -846,6 +846,7 @@ if (_resetToken) {
   showApp();
 } else {
   document.getElementById('auth-screen').style.display = 'flex';
+  showTab('login');
 }
 </script>
 </body>
