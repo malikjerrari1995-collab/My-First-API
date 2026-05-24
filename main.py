@@ -629,11 +629,19 @@ def _detect_csv_columns(headers):
 
 def _parse_date(s):
     for fmt in ['%Y-%m-%d','%d/%m/%Y','%m/%d/%Y','%d-%m-%Y','%d.%m.%Y',
-                '%d %b %Y','%d %B %Y',   # abbreviated (May) and full (March) month names
+                '%d %b %Y','%d %B %Y',
                 '%d/%m/%y','%d.%m.%y','%d %b %y','%d %B %y',
                 '%Y/%m/%d']:
         try:
             return datetime.strptime(s.strip(), fmt).strftime('%Y-%m-%d')
+        except (ValueError, AttributeError):
+            continue
+    # Handle day+month without year (e.g. NatWest "22 May") — assume current year
+    current_year = datetime.today().year
+    for fmt in ['%d %b', '%d %B']:
+        try:
+            dt = datetime.strptime(s.strip(), fmt)
+            return dt.replace(year=current_year).strftime('%Y-%m-%d')
         except (ValueError, AttributeError):
             continue
     return None
@@ -883,10 +891,12 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
         else:
             debit = _parse_amount(row.get(debit_col, '')) if debit_col else None
             credit = _parse_amount(row.get(credit_col, '')) if credit_col else None
-            if debit and debit > 0:
-                is_expense, abs_amount = True, round(debit, 2)
-            elif credit and credit > 0:
-                is_expense, abs_amount = False, round(credit, 2)
+            # Use abs() so both positive and negative values in the debit/credit
+            # columns are handled (e.g. NatWest puts -£100.00 in "Paid out (£)")
+            if debit is not None and debit != 0:
+                is_expense, abs_amount = True, round(abs(debit), 2)
+            elif credit is not None and credit != 0:
+                is_expense, abs_amount = False, round(abs(credit), 2)
             else:
                 skipped += 1
                 continue
