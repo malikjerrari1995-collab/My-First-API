@@ -1,5 +1,6 @@
 import re
 import os
+import json
 import secrets
 import resend
 import csv
@@ -98,6 +99,14 @@ class PasswordResetToken(Base):
     email      = Column(String, nullable=False, index=True)
     token      = Column(String, nullable=False, unique=True)
     expires_at = Column(String, nullable=False)
+
+class Transfer(Base):
+    __tablename__ = "transfers"
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, nullable=False)
+    amount      = Column(Float, nullable=False)
+    description = Column(String, nullable=True)
+    date        = Column(String, nullable=False)
 
 Base.metadata.create_all(bind=engine)
 
@@ -320,6 +329,7 @@ def clear_all_users(x_admin_key: Optional[str] = Header(None)):
     db.query(Budget).delete()
     db.query(Income).delete()
     db.query(Expense).delete()
+    db.query(Transfer).delete()
     db.query(User).delete()
     db.commit()
     db.close()
@@ -341,6 +351,7 @@ def delete_user_by_email(email: str = Query(...), x_admin_key: Optional[str] = H
     db.query(Budget).filter(Budget.user_id == uid).delete()
     db.query(Income).filter(Income.user_id == uid).delete()
     db.query(Expense).filter(Expense.user_id == uid).delete()
+    db.query(Transfer).filter(Transfer.user_id == uid).delete()
     db.delete(user)
     db.commit()
     db.close()
@@ -431,6 +442,31 @@ def delete_income(income_id: int, user_id: int = Depends(get_current_user)):
     db.commit()
     db.close()
     return {"message": f"Income {income_id} deleted!"}
+
+@app.get("/transfers")
+def get_transfers(month: Optional[str] = Query(None), user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    query = db.query(Transfer).filter(Transfer.user_id == user_id)
+    if month:
+        query = query.filter(Transfer.date.startswith(month))
+    transfers = query.order_by(Transfer.date.desc()).all()
+    total = sum(t.amount for t in transfers)
+    db.close()
+    return {"total": round(total, 2), "count": len(transfers),
+            "transfers": [{"id": t.id, "amount": t.amount, "description": t.description, "date": t.date}
+                          for t in transfers]}
+
+@app.delete("/transfers/{transfer_id}")
+def delete_transfer(transfer_id: int, user_id: int = Depends(get_current_user)):
+    db = SessionLocal()
+    t = db.query(Transfer).filter(Transfer.id == transfer_id, Transfer.user_id == user_id).first()
+    if not t:
+        db.close()
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    db.delete(t)
+    db.commit()
+    db.close()
+    return {"message": f"Transfer {transfer_id} deleted!"}
 
 @app.delete("/clear/{month}")
 def clear_month(month: str, user_id: int = Depends(get_current_user)):
@@ -595,6 +631,51 @@ _DESC_TERMS   = ['description','memo','narrative','details','verwendungszweck','
                  'auftraggeber','beguenstigter','zahlungsempfaenger','empfaenger','omschrijving',
                  'naam','libelle','concepto','causale','counter party','counterparty','payee',
                  'merchant','reference','transaction','name']
+_TRANSFER_TERMS = {'to pot', 'from pot', 'transfer', 'moving money', 'internal'}
+
+def _is_transfer(desc: str) -> bool:
+    dl = (desc or '').lower()
+    return any(t in dl for t in _TRANSFER_TERMS)
+
+_AI_VALID_CATS = frozenset({'food', 'transport', 'entertainment', 'utilities', 'rent', 'shopping', 'fitness', 'other'})
+
+def _ai_categorize(descriptions: list) -> list:
+    """Batch-categorize expense descriptions using Claude. Returns 'other' for every item on failure."""
+    if not descriptions:
+        return []
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return ['other'] * len(descriptions)
+    try:
+        import anthropic as _ant
+        client = _ant.Anthropic(api_key=api_key)
+        numbered = '\n'.join(f'{i+1}. {d}' for i, d in enumerate(descriptions))
+        prompt = (
+            'Categorize each bank transaction into exactly one of: '
+            'food, transport, entertainment, utilities, rent, shopping, fitness, other.\n'
+            'Hints: groceries/restaurants/cafes → food; tube/bus/train/petrol/parking → transport; '
+            'gym/sport/yoga → fitness; amazon/ebay/clothing/department stores → shopping; '
+            'council tax/gas/electric/water/phone/broadband/insurance → utilities; '
+            'salary/refund/hmrc → other (income items are filtered before this call).\n'
+            'Return ONLY a valid JSON array of lowercase strings, same count and order as input.\n'
+            f'Input ({len(descriptions)} items):\n{numbered}'
+        )
+        msg = client.messages.create(
+            model='claude-sonnet-4-20250514',
+            max_tokens=max(256, len(descriptions) * 12),
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        raw = msg.content[0].text.strip()
+        m = re.search(r'\[.*\]', raw, re.DOTALL)
+        if m:
+            cats = json.loads(m.group())
+            result = [c.lower() if c.lower() in _AI_VALID_CATS else 'other'
+                      for c in cats[:len(descriptions)]]
+            result += ['other'] * (len(descriptions) - len(result))
+            return result
+    except Exception:
+        pass
+    return ['other'] * len(descriptions)
 
 def _detect_csv_columns(headers):
     hl = [h.lower().strip() for h in headers]
@@ -948,16 +1029,16 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
     sample_date = sample.get(date_col, '') if date_col else ''
     sample_amount = sample.get(amount_col or debit_col or credit_col or '', '') if sample else ''
 
-    db = SessionLocal()
-    imported_expenses = imported_income = skipped = 0
-
+    # ── First pass: parse every valid row into pending list ──────────────────
+    pending = []   # (date, desc, is_expense, abs_amount)
+    skipped = 0
     for row in rows:
         date = _parse_date(row.get(date_col, ''))
         if not date:
             skipped += 1
             continue
 
-        desc = row.get(desc_col, '').strip() if desc_col else 'Bank transaction'
+        desc = (row.get(desc_col, '') or '').strip() if desc_col else ''
         desc = desc or 'Bank transaction'
 
         if amount_col:
@@ -968,12 +1049,12 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
             is_expense = amount < 0
             abs_amount = round(abs(amount), 2)
         else:
-            debit = _parse_amount(row.get(debit_col, '')) if debit_col else None
+            debit  = _parse_amount(row.get(debit_col,  '')) if debit_col  else None
             credit = _parse_amount(row.get(credit_col, '')) if credit_col else None
-            if debit and debit > 0:
-                is_expense, abs_amount = True, round(debit, 2)
-            elif credit and credit > 0:
-                is_expense, abs_amount = False, round(credit, 2)
+            if debit is not None and debit != 0:
+                is_expense, abs_amount = True,  round(abs(debit),  2)
+            elif credit is not None and credit != 0:
+                is_expense, abs_amount = False, round(abs(credit), 2)
             else:
                 skipped += 1
                 continue
@@ -981,14 +1062,36 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
         if abs_amount == 0:
             skipped += 1
             continue
+        pending.append((date, desc, is_expense, abs_amount))
 
-        if is_expense:
+    # ── AI-categorise expenses in one batch call ──────────────────────────────
+    expense_idxs = [i for i, (_, desc, is_exp, _) in enumerate(pending)
+                    if is_exp and not _is_transfer(desc)]
+    ai_cats = _ai_categorize([pending[i][1] for i in expense_idxs])
+    cat_map  = {expense_idxs[j]: ai_cats[j] for j in range(len(expense_idxs))}
+
+    # ── Second pass: save to DB ───────────────────────────────────────────────
+    db = SessionLocal()
+    imported_expenses = imported_income = imported_transfers = 0
+
+    for i, (date, desc, is_expense, abs_amount) in enumerate(pending):
+        if _is_transfer(desc):
+            exists = db.query(Transfer).filter(
+                Transfer.user_id == user_id, Transfer.amount == abs_amount,
+                Transfer.date == date, Transfer.description == desc
+            ).first()
+            if not exists:
+                db.add(Transfer(user_id=user_id, amount=abs_amount, description=desc, date=date))
+                imported_transfers += 1
+        elif is_expense:
+            category = cat_map.get(i, 'other')
             exists = db.query(Expense).filter(
                 Expense.user_id == user_id, Expense.amount == abs_amount,
                 Expense.date == date, Expense.description == desc
             ).first()
             if not exists:
-                db.add(Expense(user_id=user_id, amount=abs_amount, category='other', description=desc, date=date, recurring=False))
+                db.add(Expense(user_id=user_id, amount=abs_amount, category=category,
+                               description=desc, date=date, recurring=False))
                 imported_expenses += 1
         else:
             exists = db.query(Income).filter(
@@ -996,7 +1099,8 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
                 Income.date == date, Income.description == desc
             ).first()
             if not exists:
-                db.add(Income(user_id=user_id, amount=abs_amount, source='Bank Import', description=desc, date=date, recurring=False))
+                db.add(Income(user_id=user_id, amount=abs_amount, source='Bank Import',
+                              description=desc, date=date, recurring=False))
                 imported_income += 1
 
     db.commit()
@@ -1007,6 +1111,8 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
         parts.append(f"{imported_expenses} expense{'s' if imported_expenses != 1 else ''}")
     if imported_income:
         parts.append(f"{imported_income} income entr{'ies' if imported_income != 1 else 'y'}")
+    if imported_transfers:
+        parts.append(f"{imported_transfers} transfer{'s' if imported_transfers != 1 else ''}")
 
     if parts:
         message = f"Imported {' and '.join(parts)}! ({skipped} rows skipped)"
@@ -1024,7 +1130,9 @@ async def import_csv(file: UploadFile = File(...), user_id: int = Depends(get_cu
     else:
         message = "No transactions found in file."
 
-    return {"message": message, "imported_expenses": imported_expenses, "imported_income": imported_income, "skipped": skipped}
+    return {"message": message, "imported_expenses": imported_expenses,
+            "imported_income": imported_income, "imported_transfers": imported_transfers,
+            "skipped": skipped}
 
 # --- AI Insights ---
 @app.get("/insights/{month}")

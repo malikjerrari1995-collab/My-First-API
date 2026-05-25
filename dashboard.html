@@ -354,6 +354,14 @@
       </div>
     </div>
 
+    <div class="row one-col" id="transfers-section" style="display:none;">
+      <div class="card">
+        <div class="section-title">🔄 Transfers</div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:8px;">Internal movements (pots, savings transfers). Not counted in income or expenses.</div>
+        <div id="transfers-list"></div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -373,7 +381,8 @@ const API = (window.location.hostname === '127.0.0.1' || window.location.hostnam
   ? 'http://127.0.0.1:8000'
   : 'https://api.financetrackr.co.uk';
 
-const ICONS = { food:'🍔', transport:'🚗', entertainment:'🎬', fitness:'💪', rent:'🏠', shopping:'🛍️', utilities:'💡', other:'📦' };
+const ICONS = { food:'🍔', transport:'🚗', entertainment:'🎬', fitness:'💪', rent:'🏠', shopping:'🛍️', utilities:'💡', other:'📦', transfer:'🔄' };
+const CAT_OPTIONS = ['food','transport','entertainment','utilities','rent','shopping','fitness','other'];
 const ICOLORS = { success:'var(--success)', warning:'var(--warning)', danger:'var(--danger)', info:'var(--accent)' };
 
 let token = localStorage.getItem('fin_token');
@@ -579,6 +588,7 @@ function loadAll() {
   loadInsights(month);
   loadComparison(month);
   loadIncomeHistory(month);
+  loadTransfers(month);
 }
 
 async function importCSV(input) {
@@ -606,7 +616,7 @@ async function importCSV(input) {
     msg.textContent = data.message;
     showToast('✅ ' + data.message);
     var month = getMonth();
-    loadSummary(month); loadExpenses(month); loadInsights(month); loadIncomeHistory(month);
+    loadSummary(month); loadExpenses(month); loadInsights(month); loadIncomeHistory(month); loadTransfers(month);
   } catch(e) {
     msg.textContent = 'Network error: ' + e.message;
     showToast('Network error — check your connection');
@@ -678,10 +688,18 @@ async function loadExpenses(month) {
     var data = await res.json();
     var list = document.getElementById('expenses-list');
     if (!data.expenses || data.expenses.length === 0) { list.innerHTML = '<div class="empty">No expenses this month</div>'; return; }
-    list.innerHTML = data.expenses.slice(0, 10).map(function(e) {
-      return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">' + (ICONS[e.category]||'📦') + '</div><div><div class="expense-name">' + (e.description||e.category) + (e.recurring ? '<span class="badge">recurring</span>' : '') + '</div><div class="expense-meta">' + e.category + ' · ' + e.date + '</div></div></div><div class="expense-right"><div class="expense-amount">' + fmt(e.amount) + '</div><button class="del-btn" onclick="deleteExpense(' + e.id + ')">🗑️</button></div></div>';
+    list.innerHTML = data.expenses.slice(0, 20).map(function(e) {
+      var catOpts = CAT_OPTIONS.map(function(c) { return '<option value="' + c + '"' + (e.category === c ? ' selected' : '') + '>' + (ICONS[c]||'📦') + ' ' + c + '</option>'; }).join('');
+      return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">' + (ICONS[e.category]||'📦') + '</div><div><div class="expense-name">' + (e.description||e.category) + (e.recurring ? '<span class="badge">recurring</span>' : '') + '</div><div class="expense-meta"><select onchange="recategorize(' + e.id + ',this.value)" style="font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);padding:1px 4px;cursor:pointer;">' + catOpts + '</select> · ' + e.date + '</div></div></div><div class="expense-right"><div class="expense-amount">' + fmt(e.amount) + '</div><button class="del-btn" onclick="deleteExpense(' + e.id + ')">🗑️</button></div></div>';
     }).join('');
   } catch(e) { document.getElementById('expenses-list').innerHTML = '<div class="empty">Could not load</div>'; }
+}
+
+async function recategorize(id, cat) {
+  try {
+    await fetch(API + '/expenses/' + id + '?category=' + encodeURIComponent(cat), { method: 'PUT', headers: hdrs() });
+    loadInsights(getMonth());
+  } catch(e) { showToast('Could not update category'); }
 }
 
 async function loadInsights(month) {
@@ -732,6 +750,29 @@ async function loadIncomeHistory(month) {
         return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">💰</div><div><div class="expense-name">' + (i.description||i.source) + (i.recurring ? '<span class="badge">recurring</span>' : '') + '</div><div class="expense-meta">' + i.source + ' · ' + i.date + '</div></div></div><div class="expense-right"><div class="income-amount">' + fmt(i.amount) + '</div><button class="del-btn" onclick="deleteIncome(' + i.id + ')">🗑️</button></div></div>';
       }).join('');
   } catch(e) { document.getElementById('income-list').innerHTML = '<div class="empty">Could not load income</div>'; }
+}
+
+async function loadTransfers(month) {
+  try {
+    var res = await fetch(API + '/transfers?month=' + month, { headers: hdrs() });
+    var data = await res.json();
+    var section = document.getElementById('transfers-section');
+    var list = document.getElementById('transfers-list');
+    if (!data.transfers || data.transfers.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    list.innerHTML = '<div style="margin-bottom:8px;font-size:13px;color:var(--text2)">Total moved: <strong>' + fmt(data.total) + '</strong></div>' +
+      data.transfers.map(function(t) {
+        return '<div class="expense-item"><div class="expense-left"><div class="expense-icon">🔄</div><div><div class="expense-name">' + (t.description||'Transfer') + '</div><div class="expense-meta">transfer · ' + t.date + '</div></div></div><div class="expense-right"><div class="expense-amount" style="color:var(--text)">' + fmt(t.amount) + '</div><button class="del-btn" onclick="deleteTransfer(' + t.id + ')">🗑️</button></div></div>';
+      }).join('');
+  } catch(e) { /* silently ignore */ }
+}
+
+async function deleteTransfer(id) {
+  if (!confirm('Remove this transfer?')) return;
+  try {
+    await fetch(API + '/transfers/' + id, { method: 'DELETE', headers: hdrs() });
+    loadTransfers(getMonth());
+  } catch(e) { showToast('Could not delete transfer'); }
 }
 
 async function addIncome() {
